@@ -1,0 +1,47 @@
+# Local development.
+# Bind to 127.0.0.1 only — do not expose to the world.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gitinho
+      POSTGRES_PASSWORD: gitinho
+      POSTGRES_DB: gitinho
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gitinho"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://gitinho:gitinho@db:5432/gitinho
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ../secrets/gh-app.pem:/run/secrets/gh-app.pem:ro
+
+  frontend:
+    build:
+      context: ../frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:8080:80"
+
+volumes:
+  pgdata:
