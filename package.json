@@ -1,0 +1,33 @@
+{
+  "name": "gitinho",
+  "version": "0.2.0-dev",
+  "private": true,
+  "description": "Agente conversacional read-only para a organização splor-mg no GitHub.",
+  "packageManager": "pnpm@10.4.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "chat:dev": "pnpm --filter chat dev",
+    "chat:build": "pnpm --filter chat build",
+    "chat:start": "pnpm --filter chat start",
+    "chat:lint": "pnpm --filter chat lint",
+    "chat:check": "pnpm --filter chat check",
+    "mcp:run": "uv run --package gitinho-mcp --env-file .env python -m gitinho_mcp",
+    "mcp:dev": "uv run --package gitinho-mcp --env-file .env mcp dev apps/mcp/gitinho_mcp/server.py",
+    "mcp:test": "uv run --package gitinho-mcp pytest apps/mcp"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@biomejs/biome",
+      "@google/genai",
+      "@parcel/watcher",
+      "@swc/core",
+      "@tailwindcss/oxide",
+      "esbuild",
+      "protobufjs",
+      "sharp",
+      "unrs-resolver"
+    ]
+  }
+}

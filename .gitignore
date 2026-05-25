@@ -4,12 +4,17 @@
 !.env.example
 secrets/
 
-# Python
+# Node / pnpm
+node_modules/
+.pnpm-store/
+.next/
+out/
+*.tsbuildinfo
+
+# Python / uv
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
 .venv/
 venv/
 env/
@@ -19,12 +24,6 @@ env/
 *.egg-info/
 build/
 dist/
-
-# Node
-node_modules/
-frontend/dist/
-.npm/
-.pnpm-store/
 
 # Editors
 .vscode/
@@ -36,7 +35,10 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 
-# Local data
+# Local data / build artifacts
 data/
 *.sqlite
 *.db
+coverage/
+playwright-report/
+test-results/
