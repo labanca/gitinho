@@ -14,10 +14,12 @@ import { customModelProvider, isToolCallUnsupportedModel } from "lib/ai/models";
 import { agentRepository, chatRepository } from "lib/db/repository";
 import globalLogger from "logger";
 import {
+  buildGitinhoBasePrompt,
   buildMcpServerCustomizationsSystemPrompt,
   buildUserSystemPrompt,
   buildToolCallUnsupportedModelSystemPrompt,
 } from "lib/ai/prompts";
+import { getAllowedOrg } from "lib/auth/github-org-allowlist";
 import {
   chatApiSchemaRequestBodySchema,
   ChatMention,
@@ -263,6 +265,7 @@ export async function POST(request: Request) {
           .orElse({});
 
         const systemPrompt = mergeSystemPrompt(
+          buildGitinhoBasePrompt(getAllowedOrg()),
           buildUserSystemPrompt(session.user, userPreferences, agent),
           buildMcpServerCustomizationsSystemPrompt(mcpServerCustomizations),
           !supportToolCall && buildToolCallUnsupportedModelSystemPrompt,

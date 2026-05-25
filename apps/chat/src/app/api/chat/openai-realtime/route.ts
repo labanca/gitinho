@@ -7,9 +7,11 @@ import {
   mergeSystemPrompt,
 } from "../shared.chat";
 import {
+  buildGitinhoBasePrompt,
   buildMcpServerCustomizationsSystemPrompt,
   buildSpeechSystemPrompt,
 } from "lib/ai/prompts";
+import { getAllowedOrg } from "lib/auth/github-org-allowlist";
 
 import { safe } from "ts-safe";
 import { DEFAULT_VOICE_TOOLS } from "lib/ai/speech";
@@ -84,6 +86,7 @@ export async function POST(request: NextRequest) {
     );
 
     const systemPrompt = mergeSystemPrompt(
+      buildGitinhoBasePrompt(getAllowedOrg()),
       buildSpeechSystemPrompt(
         session.user,
         userPreferences ?? undefined,
