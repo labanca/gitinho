@@ -28,8 +28,16 @@ const DEFAULT_FILE_PART_MIME_SET = new Set<string>(
 export const INGEST_SUPPORTED_MIME = new Set<string>([
   "text/csv",
   "application/csv",
-  // Future: xlsx when server-side parser is added
-  // "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/rtf",
+  "application/vnd.oasis.opendocument.text",
+  "application/epub+zip",
 ]);
 
 export const isFilePartSupported = (

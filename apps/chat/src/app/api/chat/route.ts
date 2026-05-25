@@ -50,6 +50,7 @@ import { generateUUID } from "lib/utils";
 import { nanoBananaTool, openaiImageTool } from "lib/ai/tools/image";
 import { ImageToolName } from "lib/ai/tools";
 import { buildCsvIngestionPreviewParts } from "@/lib/ai/ingest/csv-ingest";
+import { buildMarkdownIngestionPreviewParts } from "@/lib/ai/ingest/markdown-ingest";
 import { serverFileStorage } from "lib/file-storage";
 
 const logger = globalLogger.withDefaults({
@@ -107,10 +108,12 @@ export async function POST(request: Request) {
     if (messages.at(-1)?.id == message.id) {
       messages.pop();
     }
-    const ingestionPreviewParts = await buildCsvIngestionPreviewParts(
-      attachments,
-      (key) => serverFileStorage.download(key),
-    );
+    const download = (key: string) => serverFileStorage.download(key);
+    const [csvPreviews, markdownPreviews] = await Promise.all([
+      buildCsvIngestionPreviewParts(attachments, download),
+      buildMarkdownIngestionPreviewParts(attachments, download),
+    ]);
+    const ingestionPreviewParts = [...csvPreviews, ...markdownPreviews];
     if (ingestionPreviewParts.length) {
       const baseParts = [...message.parts];
       let insertionIndex = -1;

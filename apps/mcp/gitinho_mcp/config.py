@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     GLOSSARY_CACHE_TTL_S: int = 300
     GITHUB_API_BASE: str = "https://api.github.com"
     GITHUB_GRAPHQL_URL: str = "https://api.github.com/graphql"
+    DOCUMENT_INGEST_MAX_MB: int = 25
 
     @field_validator("ALLOWED_ORG")
     @classmethod
