@@ -36,6 +36,9 @@ function parseSocialAuthConfigs() {
       clientId: process.env.GITHUB_CLIENT_ID,
       clientSecret: process.env.GITHUB_CLIENT_SECRET,
       disableSignUp,
+      // read:org is required so the post-OAuth org allowlist hook can
+      // call /user/orgs against GitHub. read:user is the default scope.
+      scope: ["read:user", "user:email", "read:org"],
     });
     if (githubResult.success) {
       configs.github = githubResult.data;

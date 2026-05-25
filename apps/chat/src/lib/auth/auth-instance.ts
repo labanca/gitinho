@@ -16,12 +16,49 @@ import logger from "logger";
 import { userRepository } from "lib/db/repository";
 import { DEFAULT_USER_ROLE, USER_ROLES } from "app-types/roles";
 import { admin, editor, user, ac } from "./roles";
+import {
+  assertGitHubOrgMembership,
+  getAllowedOrg,
+} from "./github-org-allowlist";
 
 const {
   emailAndPasswordEnabled,
   signUpEnabled,
   socialAuthenticationProviders,
 } = getAuthConfig();
+
+/**
+ * For GitHub sign-ins, verify the user belongs to ALLOWED_ORG, then strip
+ * the OAuth tokens before they hit the DB. We use the GitHub App for any
+ * data access, so the user's OAuth token is identity-only and shouldn't
+ * persist beyond this request.
+ *
+ * Reads `ALLOWED_ORG` lazily — module-load must not crash when the env
+ * isn't set (test environments, build-time analyzers, etc.).
+ */
+async function enforceGitHubOrgAllowlist(account: {
+  providerId?: string;
+  accessToken?: string | null;
+}) {
+  if (account.providerId !== "github") return;
+  if (!account.accessToken) {
+    throw new Error(
+      "Token de acesso ausente do callback do GitHub — login não pode ser autorizado.",
+    );
+  }
+  await assertGitHubOrgMembership(account.accessToken, getAllowedOrg());
+}
+
+function stripOAuthTokens<T extends Record<string, unknown>>(account: T): T {
+  return {
+    ...account,
+    accessToken: null,
+    refreshToken: null,
+    accessTokenExpiresAt: null,
+    refreshTokenExpiresAt: null,
+    idToken: null,
+  };
+}
 
 const options = {
   secret: process.env.BETTER_AUTH_SECRET!,
@@ -77,6 +114,24 @@ const options = {
               role,
             },
           };
+        },
+      },
+    },
+    account: {
+      create: {
+        before: async (account) => {
+          await enforceGitHubOrgAllowlist(account);
+          if (account.providerId === "github") {
+            return { data: stripOAuthTokens(account) };
+          }
+        },
+      },
+      update: {
+        before: async (account) => {
+          await enforceGitHubOrgAllowlist(account);
+          if (account.providerId === "github") {
+            return { data: stripOAuthTokens(account) };
+          }
         },
       },
     },

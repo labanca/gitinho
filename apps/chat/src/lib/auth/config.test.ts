@@ -86,6 +86,7 @@ describe("Auth Config", () => {
         clientId: "github-client-id",
         clientSecret: "github-client-secret",
         disableSignUp: false,
+        scope: ["read:user", "user:email", "read:org"],
       });
     });
 
@@ -99,6 +100,7 @@ describe("Auth Config", () => {
         clientId: "github-client-id",
         clientSecret: "github-client-secret",
         disableSignUp: true,
+        scope: ["read:user", "user:email", "read:org"],
       });
     });
 
@@ -195,6 +197,7 @@ describe("Auth Config", () => {
             clientId: "github-client-id",
             clientSecret: "github-client-secret",
             disableSignUp: true,
+            scope: ["read:user", "user:email", "read:org"],
           },
           google: {
             clientId: "google-client-id",

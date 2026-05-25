@@ -15,6 +15,7 @@ export const GitHubConfigSchema = z.object({
   clientId: z.string().min(1),
   clientSecret: z.string().min(1),
   disableSignUp: z.boolean().optional(),
+  scope: z.array(z.string()).optional(),
 });
 
 export const GoogleConfigSchema = z.object({
