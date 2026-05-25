@@ -1,0 +1,15 @@
+{
+  "gitinho": {
+    "command": "uv",
+    "args": [
+      "run",
+      "--directory",
+      "../mcp",
+      "--env-file",
+      "../../.env",
+      "python",
+      "-m",
+      "gitinho_mcp.server"
+    ]
+  }
+}
