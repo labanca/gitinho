@@ -4,7 +4,126 @@
 > que** foi decidido, **por que**, e **alternativas consideradas**. Use
 > este log para entender o histórico antes de mudar algo estrutural.
 
+## 2026-05-26 — Migração para better-chatbot + MCP Python
+
+O esqueleto FastAPI/React+Vite escrito em 2026-05-21 foi descartado em
+favor de um monorepo:
+- `apps/chat/` — fork vendored de `cgoinglove/better-chatbot` (Next.js 16,
+  Vercel AI SDK, Better Auth, Drizzle ORM)
+- `apps/mcp/` — servidor MCP Python `gitinho-mcp` (FastMCP) com 22 tools
+  read-only
+
+Versão pré-migração congelada na tag `pre-migration-2026-05-25` e copiada
+para `../gitinho-legacy/` fora do repo. Plano completo da migração em
+[`MIGRATION_BETTER_CHATBOT.md`](./MIGRATION_BETTER_CHATBOT.md).
+
+### Por que better-chatbot
+
+O FastAPI+React custom precisava reconstruir do zero: workflows, agents
+nomeados, file ingest, voz, multi-provider, admin panel, share, i18n,
+threads, archive. O better-chatbot já entrega tudo isso em qualidade
+superior à que conseguiríamos em prazo razoável, sob licença MIT.
+
+**Alternativas consideradas:**
+- **Continuar FastAPI custom**: ~3+ meses para feature parity com
+  better-chatbot. Não justifica.
+- **Strip-and-mount** (better-chatbot só como build estático + FastAPI
+  back): descartado — better-chatbot é Next.js full-stack, não SPA;
+  perderia features que dependem do back TS.
+- **Híbrido** (better-chatbot + FastAPI atual como MCP HTTP): mais
+  latência e mais infra (CORS, auth dupla). Stdio MCP é mais simples.
+
+### Por que MCP Python (não TypeScript)
+
+As 22 tools sobreviveram 1:1 — apenas mudaram de registry Python custom
+para `@mcp.tool()` do SDK MCP oficial. Zero rework de regra GitHub:
+- `GitHubClient` + `OrgAllowlistError`
+- Tools `find_datapackages`, `org_users_activity_report`, etc.
+- Geração XLSX via `openpyxl` (no caso de `convert_document`, MarkItDown)
+
+Manter Python deixou a base de domínio intacta e abriu a porta para
+reusar `gitinho-mcp` fora do chat (CLI, cron, CI) ou plugar outros
+servidores MCP (GitHub oficial, Postgres, filesystem) no mesmo chat.
+
+### MCP via stdio (não SSE/HTTP)
+
+`FILE_BASED_MCP_CONFIG=true` aponta o better-chatbot para
+`.mcp-config.json`, que executa `uv run python -m gitinho_mcp` como
+subprocesso no mesmo container.
+
+**Por que stdio:**
+- Sem rede, sem CORS, sem porta exposta.
+- Sem auth entre chat e MCP (são o mesmo processo lógico).
+- Latência mínima.
+
+**Quando migrar para SSE/HTTP:** se quisermos múltiplos clientes (ex.:
+CLI + chat) compartilhando o mesmo servidor. Por enquanto não é o caso.
+
+### Exports: tool nativa `createTable` (não tool MCP custom)
+
+A geração de XLSX/CSV foi movida do servidor MCP para o frontend. O
+LLM agora busca os dados via tool MCP (ex.: `org_users_activity_report`)
+e chama `createTable` (tool nativa do better-chatbot) com
+`title/columns/data`. A tabela renderizada já tem botões nativos de
+download XLSX/CSV.
+
+**Por que:** elimina round-trip de payload binário pelo MCP, dá ao
+usuário controle de coluna/ordenação na UI, e remove ~300 linhas de
+código de geração XLSX do MCP.
+
+### Allowlist por org no Better Auth (não em código próprio)
+
+Hook `databaseHooks.account.create.before` em
+`apps/chat/src/lib/auth/auth-instance.ts` chama
+`assertGitHubOrgMembership(accessToken, ALLOWED_ORG)` antes de persistir
+a conta. Logo após, `stripOAuthTokens` zera o token OAuth (identidade
+fica, segredo some).
+
+**Por que `/user/orgs` em vez de `/user/memberships/orgs/{org}`:**
+`/user/orgs` lista apenas orgs que o usuário **explicitamente
+autorizou o OAuth App a acessar** no fluxo de consentimento. Isso
+implementa o "per-org grant" que o usuário pediu — não basta o usuário
+ser membro de `splor-mg`, ele precisa ter dado consent explícito ao
+Gitinho para aquela org.
+
+### MinIO sidecar para file ingest (não Vercel Blob, não filesystem)
+
+Decidido em 2026-05-26 (fase 7-8): adicionar `minio` como sidecar do
+compose, com bucket `gitinho-uploads`. Driver `FILE_STORAGE_TYPE=s3`.
+Porta apenas em `127.0.0.1`.
+
+**Por que MinIO local em vez de Vercel Blob ou S3 real:**
+- Easy Panel é self-hosted; não queremos dependência externa para uma
+  feature opcional (file ingest).
+- MinIO é S3-compatível — se um dia migrarmos para S3 real, é mudar
+  endpoint e credenciais.
+- Mantém payload sensível dentro da VM da org.
+
+**Por que não filesystem:** better-chatbot espera driver S3 ou
+vercel-blob. Implementar driver "local fs" seria patch invasivo no
+upstream.
+
+### Per-org OAuth grant (limitação confirmada)
+
+Confirmado durante a migração: GitHub OAuth Apps **não suportam**
+"grant por org" nativamente — uma OAuth App é por-conta. O que protege
+o Gitinho:
+1. GitHub App (que faz o acesso a dados) instalada apenas em `splor-mg`.
+2. `/user/orgs` retorna só orgs com consent explícito do OAuth App
+   pelo usuário.
+3. `OrgAllowlistError` no cliente HTTP do MCP.
+
+Para multi-org, cada deploy do Gitinho usa sua própria GitHub App.
+
+---
+
 ## 2026-05-21 — Sessão inicial de planejamento e esqueleto da Fase 1
+
+> ⚠️ A stack descrita abaixo foi **substituída** pela migração de
+> 2026-05-26 (acima). Mantida como histórico — a maioria dos racionais
+> (precisão GraphQL, allowlist em camadas, read-only enforcement,
+> deploy Easy Panel como serviços individuais) **continuam aplicáveis**
+> à stack atual, só mudaram de implementação.
 
 ### Stack: Python + FastAPI (substituindo Node.js)
 

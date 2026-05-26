@@ -1,20 +1,21 @@
 # Gitinho — Segurança
 
 > Postura: **read-only por padrão**, **defesa em profundidade** e
-> **isolamento entre organizações**. Mesmo que o LLM seja
-> comprometido por prompt-injection, ele não consegue destruir nem
-> exfiltrar ativos da organização.
+> **isolamento por organização**. Mesmo que o LLM seja comprometido por
+> prompt-injection, ele não consegue destruir nem exfiltrar ativos da
+> organização.
 
 ## 1. Modelo de Ameaças
 
 | Atacante | Vetor | O que ele pode fazer | Como bloqueamos |
 |---|---|---|---|
-| Outsider | Internet pública | Acessar a UI sem login | OAuth obrigatório, allowlist de org |
-| Usuário externo à org | Login OAuth | Logar com sua conta GitHub fora da org | Verificação de membership na org |
-| Usuário interno legítimo | Pergunta maliciosa para o LLM | "Apague o repo X" | Token sem escopo de escrita; tools WRITE não registradas |
-| Conteúdo malicioso na org | Issue/PR com prompt-injection | Faz o LLM tomar ações | Tools WRITE bloqueadas; auditoria |
-| Atacante com acesso ao host | Arquivos no servidor | Lê token GitHub App | Chave privada em secret do Easy Panel; cifra em repouso |
-| Atacante na rede | MITM | Lê cookie de sessão | HTTPS obrigatório; HSTS; cookies Secure |
+| Outsider | Internet pública | Acessar a UI sem login | OAuth obrigatório; allowlist de org |
+| Usuário externo à org | Login GitHub OAuth | Logar com conta fora da org | `assertGitHubOrgMembership` em `signIn.before` recusa membership ≠ `ALLOWED_ORG` |
+| Usuário interno legítimo | Prompt malicioso ao LLM | "Apague o repo X" | GitHub App sem escopo de escrita; nenhuma tool WRITE registrada no MCP |
+| Conteúdo malicioso na org | Issue/PR com prompt-injection | Faz o LLM tomar ações destrutivas | Tools WRITE inexistentes; `NOT_ALLOW_ADD_MCP_SERVERS=1`; `OrgAllowlistError` no cliente GitHub |
+| Atacante com acesso ao host | Arquivos no servidor | Lê chave privada da GitHub App | `secrets/gh-app.pem` montado read-only no container; fora do repo (`.gitignore`) |
+| Atacante na rede | MITM | Lê cookie de sessão | HTTPS obrigatório no proxy do Easy Panel; HSTS; cookies `Secure` |
+| Operador interno | Plugar MCP server malicioso | Tools arbitrárias via UI | `NOT_ALLOW_ADD_MCP_SERVERS=1` bloqueia adição via UI |
 
 ## 2. Controles
 
@@ -27,7 +28,7 @@ Repository permissions:
   Issues             Read
   Pull requests      Read
   Discussions        Read
-  Actions            Read     (opcional)
+  Actions            Read   (opcional)
   Pages              No access
   Secrets            No access
   Webhooks           No access
@@ -40,65 +41,77 @@ Organization permissions:
 Account permissions:
   (none)
 
-Subscribe to events: none (fase 1)
+Subscribe to events: none (Fase 1)
 ```
 
-Em fase 2, escopos de escrita só são adicionados após auditoria + ativação
+Em Fase 2, escopos de escrita só são adicionados após auditoria + ativação
 de feature flag.
 
 ### 2.2 Allowlist de Organização (Defesa em Profundidade)
 
-- **Camada 1**: GitHub App só está instalado na org alvo. Tentar acessar
-  outra org devolve 404.
-- **Camada 2**: Em `github/client.py`, todo wrapper de URL inspeciona o
-  `owner` e rejeita se ≠ `ALLOWED_ORG`. Erro `OrgAllowlistError`
-  registrado em `audit_log`.
-- **Camada 3**: Tools customizadas não recebem `org` como parâmetro do
-  LLM — vem fixa do contexto da aplicação.
+Três camadas independentes:
 
-### 2.3 Tool Registry — Modo de Operação
+- **Camada 1 — App instalada apenas na org alvo.** A GitHub App está
+  instalada apenas em `splor-mg`. Tentar acessar outra org devolve 404.
+- **Camada 2 — Membership no login.** Hook `signIn.before` do Better Auth
+  chama `https://api.github.com/user/orgs` com o token OAuth recebido e
+  rejeita se `ALLOWED_ORG` não está na lista. Implementação em
+  `apps/chat/src/lib/auth/github-org-allowlist.ts`. Token OAuth é
+  descartado imediatamente após a verificação (não persistido em DB).
+- **Camada 3 — Owner-check no cliente HTTP.** Em
+  `apps/mcp/gitinho_mcp/github/client.py`, todo wrapper de URL inspeciona
+  o `owner` e levanta `OrgAllowlistError` se ≠ `ALLOWED_ORG`. Última
+  linha de defesa caso uma tool aceite parâmetro de owner por engano.
 
-Cada tool declara um `mode`:
+### 2.3 Tools — Read-only enforced
 
-```python
-class ToolMode(StrEnum):
-    READ = "read"
-    WRITE = "write"
-    ADMIN = "admin"
-```
+O servidor MCP `gitinho-mcp` **não registra nenhuma tool de escrita**.
+Não existem funções `create_*`, `update_*`, `delete_*`, `merge_*`,
+`close_*` em `apps/mcp/gitinho_mcp/tools/`. O LLM, ao introspeccionar
+tools disponíveis via stdio, só vê tools READ.
 
-Na inicialização do agente:
+Além disso:
 
-```python
-if not settings.AGENT_ALLOW_WRITE:
-    tools = [t for t in tools if t.mode == ToolMode.READ]
-```
+- **`NOT_ALLOW_ADD_MCP_SERVERS=1`** bloqueia o usuário (mesmo admin) de
+  plugar outros servidores MCP via UI do better-chatbot. A única
+  origem de tools é o `.mcp-config.json` controlado por nós.
+- Em Fase 2, tools WRITE só serão expostas com modal de confirmação
+  humana mostrando o diff antes da chamada.
 
-Em fase 1, `AGENT_ALLOW_WRITE=false` no `.env.example` e no compose.
-Não há tool de escrita registrada nem importada.
+### 2.4 Autenticação e Sessão (Better Auth)
 
-### 2.4 Sessões
-
-- Cookie `gitinho_session`: HttpOnly, Secure, SameSite=Lax.
-- Token de sessão: 256 bits, hash SHA-256 armazenado no DB (não plaintext).
-- TTL: 7 dias com rotação a cada login.
-- Logout invalida no DB.
-- `ip_hash` registra origem por sessão (não IP em claro).
+- Provider único habilitado: **GitHub OAuth**.
+- `DISABLE_EMAIL_SIGN_IN=1`, `DISABLE_EMAIL_SIGN_UP=1`,
+  `DISABLE_SIGN_UP=1` — caminhos de e-mail desligados.
+- Cookie de sessão: HttpOnly, `Secure` em produção, `SameSite=Lax`.
+- TTL: 7 dias; refresh a cada 1 dia de uso.
+- `accessToken/refreshToken/idToken` do GitHub OAuth são **explicitamente
+  zerados** antes de persistir em `account` (ver `stripOAuthTokens` em
+  `apps/chat/src/lib/auth/auth-instance.ts`). Identidade fica, token
+  some.
+- O primeiro usuário a logar vira `admin` (regra do better-chatbot,
+  cacheada em memória após o primeiro check).
 
 ### 2.5 CSRF
 
-- Endpoints `GET` são idempotentes.
-- Endpoints `POST/PUT/PATCH/DELETE` exigem header `X-CSRF-Token` que bate
-  com cookie `gitinho_csrf` (double-submit).
+Better Auth aplica proteção CSRF nativa nos endpoints de auth. Routes
+mutadoras do chat usam cookies HttpOnly + verificação de origem do
+Next.js.
 
-### 2.6 Rate-Limit
+### 2.6 Rate-limit
 
-- Por usuário: 60 req/min na API geral, 10 req/min em criação de
-  mensagens, 5 exports/hora.
-- Por IP (pré-login): 20 req/min.
-- 429 com `Retry-After`.
+Não há rate-limit aplicacional explícito nesta versão. Mitigações
+atuais:
+
+- **GitHub API**: 15k req/h por instalação da App.
+- **Azure Foundry**: quotas configuradas no recurso.
+- **Reverse-proxy (Easy Panel)**: rate-limit ao nível de IP pode ser
+  configurado se necessário.
 
 ### 2.7 Headers de Segurança
+
+Configurados em `apps/chat/next.config.ts` (fase 8 do roadmap, commit
+`a2ad9a9`):
 
 ```
 Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
@@ -107,86 +120,122 @@ X-Frame-Options: DENY
 Referrer-Policy: strict-origin-when-cross-origin
 Content-Security-Policy:
   default-src 'self';
-  script-src 'self';
+  script-src 'self' 'unsafe-inline';   (necessário para Next.js)
   style-src 'self' 'unsafe-inline';
-  img-src 'self' data: https://avatars.githubusercontent.com;
+  img-src 'self' data: https://avatars.githubusercontent.com https://cdn.jsdelivr.net;
   connect-src 'self';
   frame-ancestors 'none';
 Permissions-Policy: camera=(), microphone=(), geolocation=()
 ```
 
+`unsafe-inline` em script-src vem do framework — pode ser apertado com
+nonces no futuro.
+
 ### 2.8 Segredos
 
 - `.env` nunca commitado (já em `.gitignore`).
-- Em produção, segredos vivem em Easy Panel env vars (ou Azure Key Vault).
-- Logs **redactam**: `GH_APP_PRIVATE_KEY`, `AZURE_OPENAI_API_KEY`,
-  `OAUTH_CLIENT_SECRET`, `SESSION_SECRET`, cookies.
+- `secrets/gh-app.pem` montado read-only no container; nunca no repo.
+- Em produção, segredos vivem em variáveis de ambiente do Easy Panel.
+- Logs **nunca** incluem `Authorization`, cookies de sessão,
+  `BETTER_AUTH_SECRET`, `OPENAI_COMPATIBLE_DATA`, `GH_APP_PRIVATE_KEY*`,
+  `AWS_SECRET_ACCESS_KEY`.
 
 ### 2.9 Banco de Dados
 
-- Usuário runtime tem `SELECT/INSERT/UPDATE/DELETE` apenas nas tabelas da
-  app — não `CREATE/DROP/ALTER`.
-- Migrações Alembic rodam com usuário separado.
-- Conexão TLS-only em produção.
+- Volume Postgres não tem porta exposta no host (apenas rede interna do
+  compose).
 - Backups diários via Easy Panel.
+- Conexão sem TLS porque é loopback dentro do compose; se você expuser,
+  ative `sslmode=require`.
 
-### 2.10 Exports
+### 2.10 File Ingest e Exports
 
-- Arquivos servidos com `Content-Disposition: attachment; filename="..."`.
-- MIME fixo (`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`).
-- Acesso via UUID v4 + verificação de `user_id`.
-- TTL 7 dias; job de limpeza diário.
-- Sem path traversal (`filename` validado contra regex
-  `^[A-Za-z0-9._-]{1,80}$`).
+**File ingest (PDF/DOCX/PPTX/XLSX)**:
+- Upload vai para MinIO sidecar (porta apenas 127.0.0.1).
+- `convert_document` do `gitinho-mcp` chama MarkItDown; falhas degradam
+  silenciosamente (loga erro, segue sem o conteúdo).
+- Bucket `gitinho-uploads` criado pelo `mc-bootstrap` one-shot.
+- TTL e limpeza: configurável no MinIO; não há policy automática em Fase 1.
+
+**Exports** (via tool nativa `createTable`):
+- Tabela renderizada inline na UI; download é gerado client-side com
+  `Content-Disposition: attachment`.
+- Não há link público nem URLs adivinháveis — o download é uma ação do
+  browser na resposta já carregada.
 
 ### 2.11 Logs
 
-> Postura "permissiva" escolhida pelo usuário: logs podem conter logins
-> públicos da org e payloads truncados. **Mesmo assim**, redactamos:
+Postura **permissiva** escolhida pelo usuário: logs podem conter logins
+públicos, payloads truncados e detalhes de chamadas MCP. **Mesmo assim**:
 
-- Tokens (GitHub, OpenAI, Azure, cookies) — sempre.
-- `GH_APP_PRIVATE_KEY` — sempre.
+- Tokens (GitHub, OpenAI, Azure, cookies) — **sempre** redacted.
+- `BETTER_AUTH_SECRET`, `GH_APP_PRIVATE_KEY*`, `AWS_SECRET_ACCESS_KEY` —
+  **sempre** redacted.
 - Conteúdo de arquivos privados — nunca logamos payload bruto.
-- Emails de membros — só se aparecem em campo público (raro).
 
-Formato: JSON estruturado, `correlation_id` por requisição, vai para
-stdout (Easy Panel coleta).
+Formato: stdout do container, JSON estruturado. `docker compose logs -f
+chat` mostra Next.js + gitinho-mcp juntos (stdio).
 
-### 2.12 Prompt-Injection
+### 2.12 Prompt-injection
 
-Cenário: alguém abre um issue na org com texto malicioso instruindo o LLM
-a "mande os tokens para X". Mitigações:
+Cenário: alguém abre um issue na org com texto instruindo o LLM a
+"mande os tokens para X". Mitigações:
 
 1. LLM **não tem acesso** a tokens. Tools nunca recebem segredos como
-   parâmetro.
+   parâmetro — o cliente GitHub é interno ao `gitinho-mcp`.
 2. Tools não fazem requisições para hosts arbitrários — só
-   `api.github.com` (rota fixa em `client.py`).
-3. Tools WRITE não estão carregadas em fase 1.
-4. Toda tool call é auditada; padrões anômalos disparam alerta.
+   `api.github.com` (controlado em `github/client.py`).
+3. **Tools WRITE não existem** no servidor MCP.
+4. `NOT_ALLOW_ADD_MCP_SERVERS=1` impede plugar tools externas via UI.
+5. `OrgAllowlistError` bloqueia exfiltração para qualquer outro owner.
 
 ### 2.13 Atualizações
 
-- Dependências fixadas em `pyproject.toml` com `>=x.y,<x.y+1` (PEP 440).
-- Renovate/Dependabot configurado no repo.
-- Imagens base Docker atualizadas mensalmente (CI rebuild).
+- `apps/chat/`: vendored do upstream `cgoinglove/better-chatbot`.
+  Rebases periódicos do fork (manual; upstream em pausa até fev/2026).
+- `apps/mcp/`: deps fixadas em `pyproject.toml` via `uv.lock`.
+- Imagens base Docker atualizadas conforme necessidade.
+
+### 2.14 Bind 127.0.0.1 (deploy)
+
+Em produção, **nenhum container expõe porta publicamente**:
+
+- `chat`: `127.0.0.1:3000` (proxy do Easy Panel termina TLS).
+- `postgres`: sem porta no host.
+- `minio`: `127.0.0.1:9000` e `127.0.0.1:9001` (console interno).
+
+A internet pública toca apenas o reverse-proxy.
 
 ## 3. Procedimento de Incidente
 
-1. **Detectar**: alerta de rate-limit anormal ou login.denied em massa.
-2. **Conter**: revogar GitHub App installation no GitHub; subir
-   `AGENT_ALLOW_WRITE=false` (já o default) e `MAINTENANCE_MODE=true`.
-3. **Investigar**: `audit_log`, `tool_calls`, logs do container.
-4. **Restaurar**: rotacionar `GH_APP_PRIVATE_KEY` e `SESSION_SECRET`,
-   reinstalar app, subir nova versão.
-5. **Postmortem**: documentar em `docs/incidents/YYYY-MM-DD.md`.
+1. **Detectar**: alerta de erro 5xx em massa, login.denied repetido,
+   tool call anômala.
+2. **Conter**:
+   - Revogar a installation da GitHub App em
+     `https://github.com/organizations/splor-mg/settings/installations`.
+   - Rotacionar `BETTER_AUTH_SECRET` (quebra todas as sessões).
+   - Subir `MAINTENANCE_MODE=true` (a implementar) ou parar o container
+     `chat`.
+3. **Investigar**: logs estruturados de `chat` e `gitinho-mcp`.
+4. **Restaurar**: nova chave privada da App, nova `BETTER_AUTH_SECRET`,
+   reinstalar a App, redeploy.
+5. **Postmortem**: documentar em `docs/incidents/YYYY-MM-DD.md` (criar
+   conforme necessidade).
 
-## 4. Auditoria
+## 4. Checklist de Segurança em Produção
 
-Toda ação relevante grava em `tool_calls` ou `audit_log` com:
-
-- `user_id`, `chat_id`, `message_id`
-- timestamp UTC
-- argumentos (sanitizados)
-- duração e status
-
-Consulta via `GET /api/audit?from=...&to=...&user=...` (admin only).
+- [x] Apenas porta `127.0.0.1:3000` exposta no host (proxy faz HTTPS).
+- [x] MinIO `127.0.0.1:9000/9001` — console nunca exposto à internet.
+- [x] Postgres sem porta no host.
+- [x] CSP + HSTS + `X-Frame-Options: DENY` no `next.config.ts`.
+- [x] OAuth GitHub serve para identidade + membership; token descartado
+      logo após.
+- [x] GitHub App restrita a `splor-mg`; tools de escrita não existem em
+      `gitinho-mcp`.
+- [x] Secrets fora do repo (`.gitignore`).
+- [x] `NOT_ALLOW_ADD_MCP_SERVERS=1` — usuário não pluga MCP arbitrário.
+- [x] `DISABLE_EMAIL_SIGN_IN/UP=1`, `DISABLE_SIGN_UP=1` — só OAuth GitHub.
+- [x] Backup diário do Postgres pelo Easy Panel.
+- [ ] Auditoria estruturada além dos logs (tabela `audit_log` dedicada)
+      — pendente.
+- [ ] Rotação automatizada de `BETTER_AUTH_SECRET` — pendente.
