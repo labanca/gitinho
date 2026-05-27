@@ -40,6 +40,12 @@ const CONNET_TIMEOUT = IS_VERCEL_ENV ? 30000 : 120000;
 const MCP_MAX_TOTAL_TIMEOUT = process.env.MCP_MAX_TOTAL_TIMEOUT
   ? parseInt(process.env.MCP_MAX_TOTAL_TIMEOUT, 10)
   : undefined;
+// SDK default is 60s; org-wide aggregation tools (e.g. org_users_activity_report)
+// fan out N×4 GitHub calls and easily blow that. 5 min covers ~200-member orgs
+// under the /search rate limit.
+const MCP_TOOL_CALL_TIMEOUT = process.env.MCP_TOOL_CALL_TIMEOUT
+  ? parseInt(process.env.MCP_TOOL_CALL_TIMEOUT, 10)
+  : 300_000;
 
 /**
  * Client class for Model Context Protocol (MCP) server connections
@@ -167,7 +173,13 @@ export class MCPClient {
   }
 
   private scheduleAutoDisconnect() {
-    if (!isNull(this.options.autoDisconnectSeconds)) {
+    // Pass 0 (or any non-positive) to keep the subprocess alive for the
+    // lifetime of the Node process — eliminates cold-start on the first
+    // tool call after an idle period.
+    if (
+      !isNull(this.options.autoDisconnectSeconds) &&
+      this.options.autoDisconnectSeconds > 0
+    ) {
       this.disconnectDebounce(() => {
         // Don't disconnect if there are tool calls in progress
         if (this.inProgressToolCallIds.length === 0) {
@@ -369,10 +381,14 @@ export class MCPClient {
       if (this.status === "authorizing") {
         throw new Error("OAuth authorization required. Try Refresh MCP Client");
       }
-      return client?.callTool({
-        name: toolName,
-        arguments: input as Record<string, unknown>,
-      });
+      return client?.callTool(
+        {
+          name: toolName,
+          arguments: input as Record<string, unknown>,
+        },
+        undefined,
+        { timeout: MCP_TOOL_CALL_TIMEOUT, resetTimeoutOnProgress: true },
+      );
     };
     return safe(() => this.logger.info("tool call", toolName))
       .ifOk(() => this.scheduleAutoDisconnect()) // disconnect if autoDisconnectSeconds is set

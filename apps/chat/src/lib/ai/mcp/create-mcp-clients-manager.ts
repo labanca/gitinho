@@ -117,8 +117,11 @@ export class MCPClientsManager {
                   return Promise.resolve();
                 }
                 // New servers or servers without cache — connect in background
-                return this.addClient(id, name, config).catch(() => {
-                  `ignore error`;
+                return this.addClient(id, name, config).catch((err) => {
+                  this.logger.error(
+                    `addClient failed for ${name} (${id}):`,
+                    err,
+                  );
                 });
               },
             ),

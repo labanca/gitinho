@@ -46,5 +46,18 @@ export async function GET() {
     return mcpInfo;
   });
 
-  return Response.json(result);
+  // File-based servers live only in memory (FILE_BASED_MCP_CONFIG=true) and
+  // are shared across users — surface them so they show in the Tools picker.
+  const dbIds = new Set(servers.map((s) => s.id));
+  const fileBased: MCPServerInfo[] = memoryClients
+    .filter(({ id }) => !dbIds.has(id))
+    .map(({ client }) => ({
+      ...client.getInfo(),
+      config: undefined,
+      visibility: "private",
+      userId: "file-based-user",
+      lastConnectionStatus: null,
+    }));
+
+  return Response.json([...result, ...fileBased]);
 }

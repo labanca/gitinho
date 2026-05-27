@@ -55,32 +55,11 @@ export interface InteractiveTableProps {
 // Sort direction type
 type SortDirection = "asc" | "desc" | null;
 
-// Lazy load XLSX library from CDN
+// Lazy-load XLSX from the local bundle (split into its own chunk by Turbopack).
+// Avoids the CDN load that gets blocked by corporate firewalls.
 const loadXLSX = async () => {
-  if (typeof window === "undefined") {
-    throw new Error("XLSX can only be loaded in browser environment");
-  }
-
-  // Check if XLSX is already loaded
-  if ((window as any).XLSX) {
-    return (window as any).XLSX;
-  }
-
-  // Load XLSX from CDN
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src =
-      "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js";
-    script.onload = () => {
-      if ((window as any).XLSX) {
-        resolve((window as any).XLSX);
-      } else {
-        reject(new Error("Failed to load XLSX library"));
-      }
-    };
-    script.onerror = () => reject(new Error("Failed to load XLSX script"));
-    document.head.appendChild(script);
-  });
+  const mod = await import("xlsx");
+  return mod;
 };
 
 export function InteractiveTable(props: InteractiveTableProps) {

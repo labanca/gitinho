@@ -130,20 +130,6 @@ async def org_users_activity_report(
             summary = await _user_activity_summary(
                 ctx, member["login"], since, until
             )
-            last = await ctx.gh.get(
-                "/search/commits",
-                params={
-                    "q": f"author:{member['login']} org:{ctx.org}",
-                    "sort": "committer-date",
-                    "order": "desc",
-                    "per_page": 1,
-                },
-                owner=ctx.org,
-            )
-            items = (last or {}).get("items", []) if isinstance(last, dict) else []
-            last_commit_at = (
-                items[0]["commit"]["committer"]["date"] if items else None
-            )
             return {
                 "login": member["login"],
                 "name": member.get("name"),
@@ -153,7 +139,6 @@ async def org_users_activity_report(
                 "pr_reviews": summary["pr_reviews"],
                 "issue_comments": summary["issue_comments_in_org"],
                 "pr_comments": summary["pr_comments_in_org"],
-                "last_commit_at": last_commit_at,
             }
 
     rows = await asyncio.gather(*[_one(m) for m in members])
