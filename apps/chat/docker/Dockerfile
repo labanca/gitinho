@@ -67,12 +67,13 @@ COPY --from=builder --chown=nextjs:nodejs /app/uv.lock /app/pyproject.toml ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/chat/.mcp-config.json.example ./apps/chat/.mcp-config.json
 
 # Pré-aquece o ambiente Python para que o primeiro request não pague a
-# penalidade de sync. uv baixa Python 3.12 gerenciado em
-# /app/.uv-python e cacheia wheels em /app/.uv-cache; chown garante que
-# o usuário nextjs consiga acessar em runtime.
+# penalidade de sync. uv baixa Python gerenciado em /app/.uv-python e
+# cacheia wheels em /app/.uv-cache. A `.venv` é criada na raiz da
+# workspace (/app/.venv), não em apps/mcp, porque /app/pyproject.toml
+# tem [tool.uv.workspace]. Chown garante acesso pelo nextjs em runtime.
 RUN mkdir -p /app/.uv-cache /app/.uv-python \
   && uv sync --directory /app/apps/mcp --no-dev \
-  && chown -R nextjs:nodejs /app/.uv-cache /app/.uv-python /app/apps/mcp/.venv
+  && chown -R nextjs:nodejs /app/.uv-cache /app/.uv-python /app/.venv
 
 USER nextjs
 
