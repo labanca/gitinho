@@ -1,7 +1,7 @@
 # =================================================================
 # Stage 1 — builder do Next.js
 # =================================================================
-FROM node:23-alpine AS builder
+FROM node:23-slim AS builder
 ARG DOCKER_BUILD="1"
 WORKDIR /app
 
@@ -19,30 +19,36 @@ RUN pnpm --filter chat build
 # =================================================================
 # Stage 2 — runtime: Node + Python + uv + apps/mcp embarcado
 # =================================================================
-FROM node:23-alpine AS runner
+# Base Debian (glibc): necessário para wheels manylinux que o ecossistema
+# do MCP depende (markitdown → magika → onnxruntime só publica manylinux,
+# não há musllinux wheel, o que inviabiliza Alpine).
+FROM node:23-slim AS runner
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Alpine é musl: uv com managed Python baixa builds glibc e quebra.
-# Forçamos uso do Python do sistema (apk) e cache em /app/.uv-cache para
-# que o usuário nextjs (não-root) consiga acessar em runtime.
-ENV UV_PYTHON_PREFERENCE=only-system
-ENV UV_PYTHON_DOWNLOADS=never
+# uv: Python gerenciado em local writeable + cache em /app para que o
+# usuário nextjs (não-root) consiga acessar em runtime sem depender de
+# /root (modo 700, intraversável por não-root).
 ENV UV_CACHE_DIR=/app/.uv-cache
+ENV UV_PYTHON_INSTALL_DIR=/app/.uv-python
 ENV UV_LINK_MODE=copy
 
-# Python + uv para o servidor MCP `gitinho-mcp` (stdio).
-RUN apk add --no-cache python3 py3-pip ca-certificates curl \
+# Python (apt) + uv (pip) para o servidor MCP `gitinho-mcp` (stdio).
+# `python3` do bookworm é 3.11 mas o requires-python do apps/mcp é >=3.12;
+# uv vai baixar e gerenciar um 3.12 standalone em UV_PYTHON_INSTALL_DIR.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-venv ca-certificates curl \
+  && rm -rf /var/lib/apt/lists/* \
   && python3 -m venv /opt/uv-venv \
   && /opt/uv-venv/bin/pip install --no-cache-dir uv \
   && ln -s /opt/uv-venv/bin/uv /usr/local/bin/uv \
   && ln -s /opt/uv-venv/bin/uvx /usr/local/bin/uvx
 
-RUN addgroup --system --gid 1001 nodejs \
-  && adduser --system --uid 1001 nextjs
+RUN groupadd --system --gid 1001 nodejs \
+  && useradd --system --uid 1001 --gid nodejs --shell /usr/sbin/nologin nextjs
 
 # Standalone output do Next.js.
 COPY --from=builder /app/apps/chat/public ./apps/chat/public
@@ -60,13 +66,13 @@ COPY --from=builder --chown=nextjs:nodejs /app/uv.lock /app/pyproject.toml ./
 # Config MCP file-based esperada pelo chat.
 COPY --from=builder --chown=nextjs:nodejs /app/apps/chat/.mcp-config.json.example ./apps/chat/.mcp-config.json
 
-# Pré-aquece o ambiente Python para que o primeiro request não
-# pague a penalidade de sync. Cache fica em /app/.uv-cache (UV_CACHE_DIR
-# acima) para que o usuário nextjs consiga acessar em runtime — /root
-# tem permissão 700 e não é traversável por usuários não-root.
-RUN mkdir -p /app/.uv-cache \
+# Pré-aquece o ambiente Python para que o primeiro request não pague a
+# penalidade de sync. uv baixa Python 3.12 gerenciado em
+# /app/.uv-python e cacheia wheels em /app/.uv-cache; chown garante que
+# o usuário nextjs consiga acessar em runtime.
+RUN mkdir -p /app/.uv-cache /app/.uv-python \
   && uv sync --directory /app/apps/mcp --no-dev \
-  && chown -R nextjs:nodejs /app/.uv-cache /app/apps/mcp/.venv
+  && chown -R nextjs:nodejs /app/.uv-cache /app/.uv-python /app/apps/mcp/.venv
 
 USER nextjs
 
