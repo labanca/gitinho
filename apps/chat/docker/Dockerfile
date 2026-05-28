@@ -35,6 +35,10 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV UV_CACHE_DIR=/app/.uv-cache
 ENV UV_PYTHON_INSTALL_DIR=/app/.uv-python
 ENV UV_LINK_MODE=copy
+# Pinamos 3.12 porque o ecossistema de wheels do MCP (notadamente
+# onnxruntime, puxado por markitdown→magika) ainda não publica cp314.
+# Sem pin, uv escolhe o mais novo (>=3.12) e a sync quebra.
+ENV UV_PYTHON=3.12
 
 # Python (apt) + uv (pip) para o servidor MCP `gitinho-mcp` (stdio).
 # `python3` do bookworm é 3.11 mas o requires-python do apps/mcp é >=3.12;
