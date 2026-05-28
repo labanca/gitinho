@@ -26,6 +26,14 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Alpine é musl: uv com managed Python baixa builds glibc e quebra.
+# Forçamos uso do Python do sistema (apk) e cache em /app/.uv-cache para
+# que o usuário nextjs (não-root) consiga acessar em runtime.
+ENV UV_PYTHON_PREFERENCE=only-system
+ENV UV_PYTHON_DOWNLOADS=never
+ENV UV_CACHE_DIR=/app/.uv-cache
+ENV UV_LINK_MODE=copy
+
 # Python + uv para o servidor MCP `gitinho-mcp` (stdio).
 RUN apk add --no-cache python3 py3-pip ca-certificates curl \
   && python3 -m venv /opt/uv-venv \
@@ -53,9 +61,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/uv.lock /app/pyproject.toml ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/chat/.mcp-config.json.example ./apps/chat/.mcp-config.json
 
 # Pré-aquece o ambiente Python para que o primeiro request não
-# pague a penalidade de sync.
-RUN uv sync --directory /app/apps/mcp --no-dev \
-  && chown -R nextjs:nodejs /app/apps/mcp/.venv /root/.cache 2>/dev/null || true
+# pague a penalidade de sync. Cache fica em /app/.uv-cache (UV_CACHE_DIR
+# acima) para que o usuário nextjs consiga acessar em runtime — /root
+# tem permissão 700 e não é traversável por usuários não-root.
+RUN mkdir -p /app/.uv-cache \
+  && uv sync --directory /app/apps/mcp --no-dev \
+  && chown -R nextjs:nodejs /app/.uv-cache /app/apps/mcp/.venv
 
 USER nextjs
 
