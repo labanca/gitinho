@@ -1,13 +1,6 @@
 {
   "gitinho": {
-    "command": "uv",
-    "args": [
-      "run",
-      "--directory",
-      "apps/mcp",
-      "python",
-      "-m",
-      "gitinho_mcp"
-    ]
+    "command": "/app/.venv/bin/python",
+    "args": ["-m", "gitinho_mcp"]
   }
 }

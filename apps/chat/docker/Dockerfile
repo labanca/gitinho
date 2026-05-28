@@ -81,6 +81,11 @@ RUN mkdir -p /app/.uv-cache /app/.uv-python \
 
 USER nextjs
 
+# Sanity check: garante que a .venv funciona como o usuário runtime.
+# Em runtime o chat invoca /app/.venv/bin/python diretamente (ver
+# .mcp-config.json), sem depender de uv no caminho crítico.
+RUN /app/.venv/bin/python -c "import gitinho_mcp; print('mcp import OK')"
+
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 ENV FILE_BASED_MCP_CONFIG=true
