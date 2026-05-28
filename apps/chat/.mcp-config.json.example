@@ -4,12 +4,10 @@
     "args": [
       "run",
       "--directory",
-      "../mcp",
-      "--env-file",
-      "../../.env",
+      "apps/mcp",
       "python",
       "-m",
-      "gitinho_mcp.server"
+      "gitinho_mcp"
     ]
   }
 }

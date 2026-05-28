@@ -62,6 +62,10 @@ USER nextjs
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 ENV FILE_BASED_MCP_CONFIG=true
+# Next.js standalone runs from /app, so the default config-path lookup
+# (`process.cwd()/.mcp-config.json`) would miss the file at
+# /app/apps/chat/.mcp-config.json. Point MCP_CONFIG_PATH explicitly.
+ENV MCP_CONFIG_PATH=/app/apps/chat/.mcp-config.json
 
 EXPOSE 3000
 
