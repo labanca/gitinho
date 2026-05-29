@@ -189,11 +189,17 @@ export const getFilePartSupportedMimeTypes = (model: LanguageModel) => {
   return staticFilePartSupportByModel.get(model) ?? [];
 };
 
-// Default to Claude Sonnet 4.6: stronger at multi-step tool orchestration
-// than gpt-4.1 (e.g., "describe repo X" loops that need list → drill →
-// read). Opus 4.7 is registered but kept as opt-in (UI model selector)
-// because it's overkill for most queries.
-const fallbackModel = staticModels.anthropic["sonnet-4.6"];
+// Fallback when the user doesn't specify a model. Set to gpt-4.1 because
+// it's the model with credentials guaranteed to work in this environment
+// (direct OPENAI_API_KEY or Foundry-routed). Sonnet 4.6 / Opus 4.7 are
+// registered above and ranked as the right choice for multi-step tool
+// orchestration, but routing them requires either:
+//   - a real Anthropic key (sk-ant-...) in ANTHROPIC_API_KEY, OR
+//   - a deployed Claude model on Azure Foundry plumbed into
+//     OPENAI_COMPATIBLE_DATA (then fallback should point there).
+// Users can still pick Sonnet/Opus from the UI model selector once
+// credentials are in place.
+const fallbackModel = staticModels.openai["gpt-4.1"];
 
 export const customModelProvider = {
   modelsInfo: Object.entries(allModels).map(([provider, models]) => ({
