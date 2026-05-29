@@ -47,7 +47,8 @@ Copie `.env.example` para `.env` na raiz e preencha:
 | Better Auth | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` | gere com `openssl rand -base64 32`; URL pública (`https://gitinho.splor.mg`) |
 | GitHub OAuth | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | login do usuário |
 | GitHub App | `GH_APP_ID`, `GH_APP_INSTALLATION_ID`, `GH_APP_PRIVATE_KEY_PATH` | path do `.pem` montado no container |
-| Azure | `OPENAI_COMPATIBLE_DATA` | JSON gerado pelo helper do better-chatbot |
+| Azure (GPT) | `OPENAI_COMPATIBLE_DATA` | JSON gerado pelo helper do better-chatbot — modelos GPT no Foundry |
+| Azure (Claude) | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY` | passthrough Anthropic no Foundry: URL termina em `/anthropic/v1` (inclua o `/v1`); chave é a do deployment Foundry (não `sk-ant-…`). Default `fallbackModel` em `models.ts` aponta para `sonnet-4.6` deste canal |
 | MCP | `FILE_BASED_MCP_CONFIG=true`, `NOT_ALLOW_ADD_MCP_SERVERS=1` | já default no compose |
 | File ingest | `FILE_STORAGE_TYPE=s3`, `FILE_STORAGE_S3_*`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | MinIO sidecar |
 

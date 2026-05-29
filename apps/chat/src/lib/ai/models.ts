@@ -3,7 +3,7 @@ import "server-only";
 import { createOllama } from "ollama-ai-provider-v2";
 import { openai } from "@ai-sdk/openai";
 import { google } from "@ai-sdk/google";
-import { anthropic } from "@ai-sdk/anthropic";
+import { anthropic as defaultAnthropic, createAnthropic } from "@ai-sdk/anthropic";
 import { xai } from "@ai-sdk/xai";
 import { LanguageModelV2, openrouter } from "@openrouter/ai-sdk-provider";
 import { createGroq } from "@ai-sdk/groq";
@@ -28,6 +28,20 @@ const groq = createGroq({
   baseURL: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
   apiKey: process.env.GROQ_API_KEY,
 });
+
+// Route Anthropic calls through Azure AI Foundry's Anthropic-passthrough
+// when ANTHROPIC_BASE_URL is set (e.g.,
+//   https://aid-splor-default-resource.services.ai.azure.com/anthropic).
+// The endpoint speaks Anthropic's native /v1/messages protocol but with
+// a Foundry-issued key (not sk-ant-...). When ANTHROPIC_BASE_URL is
+// unset, fall back to the default Anthropic SDK behavior (api.anthropic.com
+// with whatever sk-ant-... key is in ANTHROPIC_API_KEY).
+const anthropic = process.env.ANTHROPIC_BASE_URL
+  ? createAnthropic({
+      baseURL: process.env.ANTHROPIC_BASE_URL,
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    })
+  : defaultAnthropic;
 
 const staticModels = {
   openai: {
@@ -189,17 +203,14 @@ export const getFilePartSupportedMimeTypes = (model: LanguageModel) => {
   return staticFilePartSupportByModel.get(model) ?? [];
 };
 
-// Fallback when the user doesn't specify a model. Set to gpt-4.1 because
-// it's the model with credentials guaranteed to work in this environment
-// (direct OPENAI_API_KEY or Foundry-routed). Sonnet 4.6 / Opus 4.7 are
-// registered above and ranked as the right choice for multi-step tool
-// orchestration, but routing them requires either:
-//   - a real Anthropic key (sk-ant-...) in ANTHROPIC_API_KEY, OR
-//   - a deployed Claude model on Azure Foundry plumbed into
-//     OPENAI_COMPATIBLE_DATA (then fallback should point there).
-// Users can still pick Sonnet/Opus from the UI model selector once
-// credentials are in place.
-const fallbackModel = staticModels.openai["gpt-4.1"];
+// Default to Claude Sonnet 4.6: stronger at multi-step tool orchestration
+// than gpt-4.1 (the loops "describe repo X → list → drill → read" are
+// where this matters most). Routed through Azure Foundry's Anthropic
+// passthrough — see the `anthropic` instance above and ANTHROPIC_BASE_URL.
+// Opus 4.7 is registered too but kept as opt-in (UI model selector)
+// because it's overkill for most queries and a separate deployment must
+// exist on Foundry.
+const fallbackModel = staticModels.anthropic["sonnet-4.6"];
 
 export const customModelProvider = {
   modelsInfo: Object.entries(allModels).map(([provider, models]) => ({

@@ -4,6 +4,74 @@
 > que** foi decidido, **por que**, e **alternativas consideradas**. Use
 > este log para entender o histórico antes de mudar algo estrutural.
 
+## 2026-05-29 — Claude via Azure Foundry passthrough (quarta iteração)
+
+A decisão anterior trocou o default para Sonnet 4.6 via provider
+`@ai-sdk/anthropic` direto. Em produção, a chave que existia em
+`ANTHROPIC_API_KEY` era **da passagem Anthropic do Azure Foundry**, não
+de `console.anthropic.com` — o teste contra `api.anthropic.com` deu
+401, e o catálogo Foundry (`OPENAI_COMPATIBLE_DATA`) só tinha GPT-4.1
+deployments, então o caminho não estava plumbed em nenhuma direção.
+
+Após o usuário deployar Claude Sonnet 4.6 no Foundry (`Target URI:
+.../anthropic/v1/messages`, `Deployment type: GlobalStandard`), a chave
+existente passou a fazer sentido: ela é a chave do **deployment**,
+não da Anthropic direta.
+
+### Decisão
+
+`models.ts` agora wrappa o Anthropic SDK com `createAnthropic` quando
+`ANTHROPIC_BASE_URL` está setado:
+
+```ts
+const anthropic = process.env.ANTHROPIC_BASE_URL
+  ? createAnthropic({
+      baseURL: process.env.ANTHROPIC_BASE_URL,
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    })
+  : defaultAnthropic;
+```
+
+O `fallbackModel` volta a apontar para `sonnet-4.6`. Em `.env` e
+`.env.example`:
+
+```
+ANTHROPIC_BASE_URL=https://aid-splor-default-resource.services.ai.azure.com/anthropic/v1
+ANTHROPIC_API_KEY=<key-do-deployment-foundry>
+```
+
+### Pegadinha pra próxima vez
+
+O Vercel AI SDK monta a URL como `{baseURL}/messages` (não
+`{baseURL}/v1/messages`). Se você setar `ANTHROPIC_BASE_URL` sem o
+`/v1` final, recebe **404 "Resource not found"** do Azure, não 401 —
+porque autentica mas atinge um path inexistente. Documentado em
+`.env.example`.
+
+### Por que não rotear via `OPENAI_COMPATIBLE_DATA` (Foundry OpenAI-compat)
+
+O Foundry expõe Anthropic em dois sabores:
+- `/anthropic/v1/messages` — protocolo Anthropic-nativo (o que usamos).
+- `/openai/v1/chat/completions?model=…` — proxy OpenAI-compat sobre
+  Claude.
+
+Escolhemos o passthrough nativo porque:
+1. Não converte o schema de mensagens duas vezes (UI → OpenAI →
+   Anthropic), preservando tool-use, vision, prompt-caching tal como a
+   Anthropic original.
+2. Permite reuso de toda a tooling do `@ai-sdk/anthropic` sem perda.
+3. Quando o Foundry atualizar Sonnet, basta criar o deployment com o
+   mesmo nome do model id Anthropic; nenhuma mudança no nosso código.
+
+### Validação
+
+End-to-end via SDK do Vercel:
+
+```js
+createAnthropic({ baseURL, apiKey })(claude-sonnet-4-6)
+// → "PONG" (22 tokens) — 200 OK
+```
+
 ## 2026-05-29 — Navegação de repo + troca de modelo default (terceira iteração)
 
 Mesmo com `describe_repo` na prod, o agente continuou patinando em
