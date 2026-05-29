@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
+import httpx
 from pydantic import BaseModel
 
 from gitinho_mcp.github.graphql import ORG_REPOS_PAGE
 from gitinho_mcp.server import mcp
 from gitinho_mcp.tools._context import ToolContext, get_context
+
+# Hard cap on file content returned to the LLM. 512 KB ≈ 130k tokens — already
+# larger than any README or manifest file we expect to read; bigger inputs
+# would dominate the context window and rarely help answer the question.
+MAX_FILE_BYTES = 512 * 1024
 
 
 class RepoSummary(BaseModel):
@@ -295,3 +304,174 @@ async def get_repo(repo: str) -> dict[str, Any]:
         "created_at", "html_url", "size",
     ]
     return {k: data.get(k) for k in keys}
+
+
+def _decode_content_payload(
+    payload: dict[str, Any], ref: str | None
+) -> dict[str, Any]:
+    """Decode a GitHub /contents or /readme JSON response into text.
+
+    Returns the standard `{"ok": ...}` envelope. Rejects directories,
+    oversize files (>MAX_FILE_BYTES), unsupported encodings, and binary
+    content that does not decode as UTF-8.
+    """
+    if payload.get("type") == "dir" or isinstance(payload, list):
+        return {"ok": False, "error": "path is a directory, not a file"}
+
+    size = int(payload.get("size") or 0)
+    if size > MAX_FILE_BYTES:
+        return {
+            "ok": False,
+            "error": (
+                f"file too large ({size} bytes, max {MAX_FILE_BYTES})"
+            ),
+            "size_bytes": size,
+            "path": payload.get("path"),
+            "html_url": payload.get("html_url"),
+        }
+
+    encoding = payload.get("encoding")
+    raw_b64 = payload.get("content") or ""
+    if encoding != "base64" or not raw_b64:
+        # GitHub returns encoding="none" with empty content for files in the
+        # 1–100 MB range. Anything else is unexpected — surface as error.
+        return {
+            "ok": False,
+            "error": (
+                f"unsupported encoding '{encoding}' "
+                "(file may be too large for the contents API)"
+            ),
+            "size_bytes": size,
+            "path": payload.get("path"),
+            "html_url": payload.get("html_url"),
+        }
+
+    try:
+        raw = base64.b64decode(raw_b64, validate=False)
+    except (binascii.Error, ValueError) as exc:
+        return {"ok": False, "error": f"invalid base64: {exc}"}
+
+    if len(raw) > MAX_FILE_BYTES:
+        return {
+            "ok": False,
+            "error": (
+                f"file too large after decode ({len(raw)} bytes, "
+                f"max {MAX_FILE_BYTES})"
+            ),
+            "size_bytes": len(raw),
+            "path": payload.get("path"),
+            "html_url": payload.get("html_url"),
+        }
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return {
+            "ok": False,
+            "error": "binary file (not valid UTF-8)",
+            "size_bytes": len(raw),
+            "path": payload.get("path"),
+            "html_url": payload.get("html_url"),
+        }
+
+    return {
+        "ok": True,
+        "name": payload.get("name"),
+        "path": payload.get("path"),
+        "sha": payload.get("sha"),
+        "size_bytes": len(raw),
+        "ref": ref,
+        "html_url": payload.get("html_url"),
+        "download_url": payload.get("download_url"),
+        "content": text,
+    }
+
+
+@mcp.tool()
+async def get_repo_readme(repo: str, ref: str | None = None) -> dict[str, Any]:
+    """Read the README of a repository as text.
+
+    Use this whenever a user asks what a repo is *about*, what it does,
+    or how to use it — the README is the primary source. The repo
+    metadata description (from `get_repo`) is often empty; the README is
+    not.
+
+    The owner is always the configured organization — pass only the repo
+    name. `ref` is optional (branch, tag, or commit SHA); when omitted
+    GitHub returns the default branch.
+
+    Errors return `{"ok": false, "error": "..."}`. Files over
+    ~512 KB are rejected to protect the LLM context window — fall back
+    to opening the HTML page if that happens.
+    """
+    ctx = await get_context()
+    safe = _safe_repo_name(repo)
+    params = {"ref": ref} if ref else None
+    try:
+        data = await ctx.gh.get(
+            f"/repos/{ctx.org}/{safe}/readme",
+            params=params,
+            owner=ctx.org,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return {"ok": False, "error": "repo or README not found"}
+        return {
+            "ok": False,
+            "error": f"github error {exc.response.status_code}",
+        }
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "unexpected response shape"}
+    return _decode_content_payload(data, ref)
+
+
+@mcp.tool()
+async def get_file_content(
+    repo: str, path: str, ref: str | None = None
+) -> dict[str, Any]:
+    """Read the text content of a single file from a repository.
+
+    Use this to inspect specific files — `mkdocs.yml`, `pyproject.toml`,
+    `datapackage.json`, `docs/index.md`, etc. — when their content
+    matters to the user's question. For the README specifically, prefer
+    `get_repo_readme` (it works regardless of filename/case).
+
+    The owner is always the configured organization — pass only the repo
+    name. `path` is the file path inside the repo (no leading slash).
+    `ref` is optional (branch, tag, or commit SHA).
+
+    Errors return `{"ok": false, "error": "..."}`. Directories,
+    binary files, and files over ~512 KB are rejected — for those,
+    return the `html_url` so the user can open it directly.
+    """
+    ctx = await get_context()
+    safe = _safe_repo_name(repo)
+    clean_path = path.lstrip("/")
+    if not clean_path:
+        return {"ok": False, "error": "path is required"}
+    encoded_path = quote(clean_path, safe="/")
+    params = {"ref": ref} if ref else None
+    try:
+        data = await ctx.gh.get(
+            f"/repos/{ctx.org}/{safe}/contents/{encoded_path}",
+            params=params,
+            owner=ctx.org,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return {"ok": False, "error": "file or repo not found"}
+        return {
+            "ok": False,
+            "error": f"github error {exc.response.status_code}",
+        }
+    if isinstance(data, list):
+        return {
+            "ok": False,
+            "error": "path is a directory, not a file",
+            "entries": [
+                {"name": e.get("name"), "type": e.get("type")} for e in data
+            ],
+        }
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "unexpected response shape"}
+    return _decode_content_payload(data, ref)

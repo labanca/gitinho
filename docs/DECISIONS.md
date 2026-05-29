@@ -4,6 +4,57 @@
 > que** foi decidido, **por que**, e **alternativas consideradas**. Use
 > este log para entender o histórico antes de mudar algo estrutural.
 
+## 2026-05-29 — Tools de leitura de conteúdo de arquivo
+
+Adicionadas duas tools ao `gitinho-mcp`:
+
+- `get_repo_readme(repo, ref?)` — chama `GET /repos/{org}/{repo}/readme`.
+- `get_file_content(repo, path, ref?)` — chama `GET /repos/{org}/{repo}/contents/{path}`.
+
+Total subiu de 22 para 24 tools.
+
+### Por que
+
+Perguntas do tipo "sobre o que é o repo X?" caíam num beco sem saída:
+as tools existentes (`get_repo`, `search_issues`) só viam metadata
+(descrição, linguagem, datas, contagens). Quando a descrição vinha
+vazia — comum nos repos antigos — o agente respondia que não sabia.
+O conteúdo real (README, manifestos como `mkdocs.yml`,
+`datapackage.json`, `pyproject.toml`) era invisível ao LLM.
+
+A permissão `Contents: Read` da GitHub App já existia desde a Fase 1
+(ver `SECURITY.md` §2.1) — só faltava expor o caminho na camada MCP.
+
+### Decisões de design
+
+- **Cap de 512 KB por arquivo**. O endpoint `/contents` do GitHub
+  devolve até 1 MB inline (base64) e rejeita >100 MB; entre 1–100 MB
+  exigiria cair na Git Data API (`/git/blobs`). Em vez de implementar
+  os três caminhos, fixamos um teto bem abaixo de 1 MB para proteger a
+  janela de contexto do LLM (512 KB ≈ 130k tokens, já cobre README e
+  manifestos com folga). Acima disso, a tool retorna erro com
+  `html_url` e o agente orienta o usuário a abrir no GitHub.
+- **`ref` opcional**. Permite buscar conteúdo em branch/tag/SHA
+  específico ("como era o README na tag `v1.0`?"). Custo zero —
+  apenas repassa o query param.
+- **UTF-8 obrigatório**. Binários (imagens, PDFs em repo) são
+  rejeitados explicitamente. Para PDF/DOCX já existe `convert_document`
+  (file ingest, não fetch remoto).
+- **Erros como dado**, não exceção: `{"ok": false, "error": "..."}`.
+  Segue o padrão de `convert_document`; o agente trata o "não achei" /
+  "muito grande" como informação e adapta a resposta.
+
+### Alternativas consideradas
+
+- **Tool genérica `fetch_url`** para qualquer URL (incluindo páginas
+  mkdocs renderizadas). Descartada nesta rodada: escapa do allowlist
+  da org (`OrgAllowlistError` deixa de fazer sentido pra URLs
+  arbitrárias), e o caso de uso central — "do que se trata este repo"
+  — é resolvido com leitura do README direto da API. Fica anotado pra
+  uma Fase 3 caso precise.
+- **Stream Git Data API para arquivos > 1 MB**. Não compensa: nenhum
+  uso atual passa de centenas de KB.
+
 ## 2026-05-26 — Migração para better-chatbot + MCP Python
 
 O esqueleto FastAPI/React+Vite escrito em 2026-05-21 foi descartado em

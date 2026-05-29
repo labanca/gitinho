@@ -19,7 +19,12 @@ async def main() -> None:
     print(f"Allowed org: {ctx.org}\n")
 
     from gitinho_mcp.tools.issues import count_open_issues
-    from gitinho_mcp.tools.repos import count_repos, repos_with_multiple_branches
+    from gitinho_mcp.tools.repos import (
+        count_repos,
+        get_file_content,
+        get_repo_readme,
+        repos_with_multiple_branches,
+    )
     from gitinho_mcp.tools.users import list_org_members
 
     try:
@@ -40,6 +45,30 @@ async def main() -> None:
 
         members = await list_org_members()
         print(f"\nlist_org_members: total={members['total']}")
+
+        readme = await get_repo_readme("gitinho")
+        if readme.get("ok"):
+            preview = readme["content"][:120].replace("\n", " ")
+            print(
+                f"\nget_repo_readme(gitinho): ok size={readme['size_bytes']}B "
+                f"preview={preview!r}"
+            )
+        else:
+            print(f"\nget_repo_readme(gitinho): FAIL {readme}")
+
+        pyproject = await get_file_content("gitinho", "pyproject.toml")
+        if pyproject.get("ok"):
+            print(
+                f"\nget_file_content(gitinho, pyproject.toml): ok "
+                f"size={pyproject['size_bytes']}B"
+            )
+        else:
+            print(
+                f"\nget_file_content(gitinho, pyproject.toml): FAIL {pyproject}"
+            )
+
+        missing = await get_file_content("gitinho", "does-not-exist.txt")
+        print(f"\nget_file_content(missing file): {missing}")
     finally:
         await aclose()
 

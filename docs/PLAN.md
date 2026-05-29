@@ -44,14 +44,14 @@ Monorepo (pnpm workspace + uv workspace).
 | Camada | Tecnologia | Onde |
 |---|---|---|
 | Chat / UI / Auth / persistência | Fork de `cgoinglove/better-chatbot` (Next.js 16, Vercel AI SDK, Better Auth, Drizzle ORM) | `apps/chat/` |
-| Tools GitHub (read-only) | Servidor MCP Python (`gitinho-mcp`) — 22 tools | `apps/mcp/` |
+| Tools GitHub (read-only) | Servidor MCP Python (`gitinho-mcp`) — 24 tools | `apps/mcp/` |
 | LLM | Azure AI Foundry via adapter OpenAI-compatible | env `OPENAI_COMPATIBLE_DATA` |
 | DB | PostgreSQL 17 (schema do better-chatbot via Drizzle) | container `postgres` |
 | File ingest | MinIO (S3-compatible) + MarkItDown no MCP | container `minio` + tool `convert_document` |
 | Exports | LLM chama tool nativa `createTable` (better-chatbot) | UI renderiza tabela com download nativo |
 | Deploy | Docker Compose → Easy Panel | `apps/chat/docker/compose.yml` |
 
-A separação chat/MCP permite reusar as 22 tools fora do chat (CLI,
+A separação chat/MCP permite reusar as 24 tools fora do chat (CLI,
 cron, CI) e plugar outros servidores MCP no mesmo chat (GitHub oficial,
 Postgres, filesystem) — sem código nosso.
 
@@ -107,7 +107,7 @@ repo.
 
 ## 4. Catálogo de Tools MCP (`gitinho-mcp`)
 
-22 tools read-only, todas auto-registradas em `apps/mcp/gitinho_mcp/tools/`:
+24 tools read-only, todas auto-registradas em `apps/mcp/gitinho_mcp/tools/`:
 
 | Módulo | Tool | Propósito |
 |---|---|---|
@@ -118,6 +118,8 @@ repo.
 | `repos.py` | `datapackages_stats` | Estatística de repos com topic `datapackage` |
 | `repos.py` | `find_datapackages` | **Canônico** — code search de `datapackage.json` na raiz |
 | `repos.py` | `get_repo` | Detalhe de um repo específico |
+| `repos.py` | `get_repo_readme` | Lê o README de um repo como texto |
+| `repos.py` | `get_file_content` | Lê qualquer arquivo (`mkdocs.yml`, `pyproject.toml`, etc.); cap 512 KB |
 | `users.py` | `list_org_members` | Lista membros da org |
 | `users.py` | `count_user_contributions` | Contagem por tipo (issue/pr/commit/pr-review) |
 | `issues.py` | `count_open_issues` | Conta issues abertas |
