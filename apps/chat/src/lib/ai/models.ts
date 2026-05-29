@@ -47,8 +47,10 @@ const staticModels = {
     "gemini-2.5-pro": google("gemini-2.5-pro"),
   },
   anthropic: {
+    "sonnet-4.6": anthropic("claude-sonnet-4-6"),
     "sonnet-4.5": anthropic("claude-sonnet-4-5"),
     "haiku-4.5": anthropic("claude-haiku-4-5"),
+    "opus-4.7": anthropic("claude-opus-4-7"),
     "opus-4.5": anthropic("claude-opus-4-5"),
   },
   xai: {
@@ -134,11 +136,19 @@ registerFileSupport(
 );
 
 registerFileSupport(
+  staticModels.anthropic["sonnet-4.6"],
+  ANTHROPIC_FILE_MIME_TYPES,
+);
+registerFileSupport(
   staticModels.anthropic["sonnet-4.5"],
   ANTHROPIC_FILE_MIME_TYPES,
 );
 registerFileSupport(
-  staticModels.anthropic["opus-4.1"],
+  staticModels.anthropic["opus-4.7"],
+  ANTHROPIC_FILE_MIME_TYPES,
+);
+registerFileSupport(
+  staticModels.anthropic["opus-4.5"],
   ANTHROPIC_FILE_MIME_TYPES,
 );
 
@@ -179,7 +189,11 @@ export const getFilePartSupportedMimeTypes = (model: LanguageModel) => {
   return staticFilePartSupportByModel.get(model) ?? [];
 };
 
-const fallbackModel = staticModels.openai["gpt-4.1"];
+// Default to Claude Sonnet 4.6: stronger at multi-step tool orchestration
+// than gpt-4.1 (e.g., "describe repo X" loops that need list → drill →
+// read). Opus 4.7 is registered but kept as opt-in (UI model selector)
+// because it's overkill for most queries.
+const fallbackModel = staticModels.anthropic["sonnet-4.6"];
 
 export const customModelProvider = {
   modelsInfo: Object.entries(allModels).map(([provider, models]) => ({

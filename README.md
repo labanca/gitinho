@@ -31,12 +31,13 @@ Monorepo (pnpm workspace + uv workspace):
   [`cgoinglove/better-chatbot`](https://github.com/cgoinglove/better-chatbot)
   (Next.js 16, Vercel AI SDK, Better Auth, Drizzle ORM, Postgres).
 - **`apps/mcp/`** — servidor [MCP](https://modelcontextprotocol.io)
-  Python (`gitinho-mcp`) expondo **25 tools read-only** sobre a API do
+  Python (`gitinho-mcp`) expondo **26 tools read-only** sobre a API do
   GitHub (repos, issues, PRs, commits, discussions, atividade,
-  glossário, conteúdo de arquivos, ingest de documentos). Inclui o
-  orquestrador `describe_repo` que junta metadata + README +
-  manifests numa única chamada — usado para responder "do que se
-  trata o repo X?". Usa GitHub App para acesso autenticado.
+  glossário, conteúdo e navegação de arquivos, ingest de documentos).
+  Inclui o orquestrador `describe_repo` (metadata + README + manifests
+  + listagem da raiz numa única chamada) e `list_repo_contents` para
+  navegar a árvore de arquivos sem chutar paths. Usa GitHub App para
+  acesso autenticado.
 
 A separação chat/MCP isola toda a lógica GitHub-específica do frontend,
 permite reusar as tools fora do chat (CLI, cron, CI) e abre a porta para

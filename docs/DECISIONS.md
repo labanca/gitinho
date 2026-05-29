@@ -4,6 +4,83 @@
 > que** foi decidido, **por que**, e **alternativas consideradas**. Use
 > este log para entender o histórico antes de mudar algo estrutural.
 
+## 2026-05-29 — Navegação de repo + troca de modelo default (terceira iteração)
+
+Mesmo com `describe_repo` na prod, o agente continuou patinando em
+perguntas do tipo "me dê uma análise completa do dpm, inclusive sobre
+seu funcionamento":
+
+1. Chutou paths sem listar — `dpm/__init__.py`, `dpm/manager.py`,
+   `manager.py`, `src/dpm.py` — todos 404. A estrutura real do dpm é
+   `main.py` na raiz + `src/` (sem subdir `dpm/`).
+2. Invocou `list_org_repos` (178 repos) na investigação de UM repo —
+   desperdício gritante de contexto.
+3. **Alucinou conteúdo do README**: disse haver "instruções para
+   construir imagem Docker e rodar jupyter notebook" — o README real
+   tem 777 B (título + badges, nenhuma instrução).
+
+Duas decisões compostas:
+
+### Decisão A — Tools de navegação
+
+- **`list_repo_contents(repo, path)`** — nova tool. Lista entries
+  reais de um path; `path=""` (default) lista a raiz. Resposta clara
+  `{ok, entries: [{name, type, size, path}]}`, sem disfarçar como
+  erro quando recebe um diretório.
+- **`describe_repo` agora retorna `root_listing`** — top-level
+  files/dirs do repo já vêm na primeira chamada. O LLM passa a ter
+  o "mapa" do repo de cara, sem precisar de uma segunda viagem só
+  pra descobrir que `dpm/` não existe e o módulo principal é
+  `main.py` na raiz.
+
+Total subiu de 25 para 26 tools.
+
+### Decisão B — Trocar modelo default para Claude Sonnet 4.6
+
+Anteriormente: GPT-4.1. Hipótese diagnóstica (confirmada com o
+usuário): em loops de "explorar → ler → decidir próximo passo"
+(estilo Claude Code), o GPT-4.1 fica para trás em três frentes
+observáveis no transcript:
+
+- Não corrige rumo após 404s — repete chutes em vez de listar.
+- Invoca tools óbvia e custosamente erradas (`list_org_repos` para
+  pergunta sobre 1 repo).
+- Alucina conteúdo quando o input legítimo é curto.
+
+Claude Sonnet 4.6 é dramaticamente melhor nas três. Opus 4.7 também,
+mas com custo muito maior — mantemos disponível na UI sob demanda,
+não como default. Implementação: `apps/chat/src/lib/ai/models.ts`
+ganhou `sonnet-4.6` e `opus-4.7` em `staticModels.anthropic` e o
+`fallbackModel` agora aponta pra Sonnet 4.6.
+
+### Decisão C — Reescrita do system prompt
+
+O `buildGitinhoBasePrompt` foi reestruturado:
+
+- Princípio explícito (#7): **"Nunca chute caminhos de arquivo."**
+  Recipe: `describe_repo` → `root_listing` → `list_repo_contents` →
+  `get_file_content` em paths reais.
+- Princípio explícito (#8): **"Não use `list_org_repos` para
+  perguntas sobre 1 repo."** Cite a razão (custo de contexto) e a
+  alternativa (`describe_repo`/`get_repo`/`list_repo_contents`).
+- Princípio explícito (#9): **"Não invente conteúdo."** Hallucination
+  é o pior erro possível.
+- Princípio explícito (#12): **"`convert_document` é só para uploads
+  do usuário."** Anti-padrão observado em prod (LLM chamou pra
+  "buscar URL").
+
+### Alternativas consideradas
+
+- **Só trocar o modelo, sem mudar tools.** Subestima o problema:
+  mesmo um modelo top precisa de tool de listagem pra navegar repo.
+- **Adicionar `walk_repo` que faz BFS automático.** Descartado:
+  rebenta janela de contexto em repos médios (>50 arquivos) e
+  não dá pro LLM o controle de "olhar onde importa".
+- **Forçar `describe_repo` no system prompt em vez de também ter
+  `list_repo_contents` à parte.** Insuficiente — para queries de
+  drill-down ("o que tem dentro de src/?") a listagem isolada é
+  necessária.
+
 ## 2026-05-29 — Orquestrador `describe_repo` (segunda iteração)
 
 Logo após adicionar `get_repo_readme` + `get_file_content` (entrada

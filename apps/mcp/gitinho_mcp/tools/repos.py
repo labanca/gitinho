@@ -542,16 +542,119 @@ async def _safe_get_file(
     return decoded if decoded.get("ok") else None
 
 
+async def _safe_list_dir(
+    ctx: ToolContext, repo_name: str, path: str = ""
+) -> list[dict[str, Any]] | None:
+    """contents listing wrapper for describe_repo: returns a list of
+    {name, type, size} entries or None when missing/invalid."""
+    suffix = f"/{quote(path.strip('/'), safe='/')}" if path.strip("/") else ""
+    try:
+        data = await ctx.gh.get(
+            f"/repos/{ctx.org}/{repo_name}/contents{suffix}",
+            owner=ctx.org,
+        )
+    except httpx.HTTPStatusError:
+        return None
+    if not isinstance(data, list):
+        return None
+    return [
+        {
+            "name": e.get("name"),
+            "type": e.get("type"),  # "file", "dir", "symlink", "submodule"
+            "size": e.get("size"),
+            "path": e.get("path"),
+        }
+        for e in data
+    ]
+
+
+@mcp.tool()
+async def list_repo_contents(
+    repo: str, path: str = "", ref: str | None = None
+) -> dict[str, Any]:
+    """List files and directories at a path in a repository.
+
+    **USE THIS to navigate a repo when you don't know its structure** —
+    instead of guessing paths like `src/X.py` or `dpm/manager.py` and
+    getting 404s, list the directory and pick a real entry. Mirrors
+    what a developer does when exploring an unfamiliar repo.
+
+    Typical flow for "describe / analyze repo X" when `describe_repo`
+    alone isn't enough:
+    1. `list_repo_contents(repo)` — see top-level files and folders.
+    2. Pick promising folders (`src/`, `lib/`, `docs/`, name-of-repo,
+       etc.) and `list_repo_contents(repo, "src")` to drill in.
+    3. Once you spot a real file, `get_file_content(repo, path)`.
+
+    `path` defaults to the repo root. `ref` is optional (branch/tag/SHA).
+    Returns `{ok, repo, path, entries: [{name, type, size, path}], ...}`
+    where `type` is one of `"file"`, `"dir"`, `"symlink"`, `"submodule"`.
+
+    Errors return `{"ok": false, "error": "..."}` — e.g. when the path
+    points to a file (use `get_file_content`) or doesn't exist.
+    """
+    ctx = await get_context()
+    safe = _safe_repo_name(repo)
+    clean_path = path.strip("/")
+    suffix = f"/{quote(clean_path, safe='/')}" if clean_path else ""
+    params = {"ref": ref} if ref else None
+    try:
+        data = await ctx.gh.get(
+            f"/repos/{ctx.org}/{safe}/contents{suffix}",
+            params=params,
+            owner=ctx.org,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return {
+                "ok": False,
+                "error": "repo or path not found",
+                "repo": safe,
+                "path": clean_path or "",
+            }
+        return {
+            "ok": False,
+            "error": f"github error {exc.response.status_code}",
+        }
+    if isinstance(data, dict):
+        return {
+            "ok": False,
+            "error": "path is a file, not a directory — use get_file_content",
+            "repo": safe,
+            "path": clean_path or "",
+        }
+    if not isinstance(data, list):
+        return {"ok": False, "error": "unexpected response shape"}
+    entries = [
+        {
+            "name": e.get("name"),
+            "type": e.get("type"),
+            "size": e.get("size"),
+            "path": e.get("path"),
+        }
+        for e in data
+    ]
+    return {
+        "ok": True,
+        "repo": safe,
+        "path": clean_path or "",
+        "ref": ref,
+        "total": len(entries),
+        "entries": entries,
+    }
+
+
 @mcp.tool()
 async def describe_repo(repo: str) -> dict[str, Any]:
-    """One-call full description of a repository — purpose, content, manifests.
+    """One-call full description of a repository — purpose, content, manifests, structure.
 
     **USE THIS for any question of the form "what is the repo X about",
-    "describe repo X", "do que se trata X", "what does X do".**
+    "describe repo X", "do que se trata X", "what does X do",
+    "análise completa de X".**
 
     Prefer this over chaining `get_repo` + `get_repo_readme` +
-    `get_file_content` manually — one call fetches everything in
-    parallel and tolerates missing pieces:
+    `get_file_content` + `list_repo_contents` manually — one call
+    fetches everything in parallel and tolerates missing pieces:
 
     - `metadata` — owner/visibility/language/dates/stars (same shape as
       `get_repo`).
@@ -562,10 +665,19 @@ async def describe_repo(repo: str) -> dict[str, Any]:
       `mkdocs.yml`, `pyproject.toml`, `package.json`,
       `datapackage.json`, `requirements.txt`. Each entry is the text
       content or `null` if missing.
+    - `root_listing` — top-level files and directories of the repo
+      (real names, not guesses). Use this to plan follow-ups: if you
+      need source code, look for `src/`, `lib/`, the repo name as a
+      folder, etc., and call `list_repo_contents(repo, "src")` to
+      drill in. Then `get_file_content` on real paths.
 
     Do **not** call `convert_document` to "fetch a URL" — that tool is
     only for files uploaded by the user in the chat. To learn about a
     repo, always use this tool.
+
+    Do **not** call `list_org_repos` when the question is about a
+    single named repo — it returns all 100+ org repos and wastes
+    context. Use this tool instead.
 
     Errors are returned as `{"ok": false, "error": "repo not found"}`
     when the repo itself is missing. Individual missing files do not
@@ -579,19 +691,27 @@ async def describe_repo(repo: str) -> dict[str, Any]:
 
     meta_task = asyncio.create_task(_safe_get_repo_meta(ctx, safe))
     readme_task = asyncio.create_task(_safe_get_readme(ctx, safe))
+    root_task = asyncio.create_task(_safe_list_dir(ctx, safe, ""))
     aux_tasks = {
         path: asyncio.create_task(_safe_get_file(ctx, safe, path))
         for path in _DESCRIBE_REPO_AUX_FILES
     }
 
-    metadata, readme = await asyncio.gather(meta_task, readme_task)
+    metadata, readme, root_listing = await asyncio.gather(
+        meta_task, readme_task, root_task
+    )
     aux_results = await asyncio.gather(*aux_tasks.values())
     aux_files = {
         path: (entry["content"] if entry else None)
         for path, entry in zip(aux_tasks.keys(), aux_results)
     }
 
-    if metadata is None and readme is None and not any(aux_files.values()):
+    if (
+        metadata is None
+        and readme is None
+        and root_listing is None
+        and not any(aux_files.values())
+    ):
         return {"ok": False, "error": "repo not found", "repo": safe}
 
     return {
@@ -602,4 +722,5 @@ async def describe_repo(repo: str) -> dict[str, Any]:
         "readme_size_bytes": readme["size_bytes"] if readme else None,
         "aux_files": aux_files,
         "aux_files_found": [p for p, c in aux_files.items() if c is not None],
+        "root_listing": root_listing,
     }

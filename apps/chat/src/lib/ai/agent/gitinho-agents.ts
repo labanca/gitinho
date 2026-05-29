@@ -40,6 +40,9 @@ export const DatapackagesAgent: GitinhoAgentSpec = {
       mcpToolMention("datapackages_stats"),
       mcpToolMention("list_org_repos"),
       mcpToolMention("get_repo"),
+      mcpToolMention("describe_repo"),
+      mcpToolMention("list_repo_contents"),
+      mcpToolMention("get_file_content"),
       mcpToolMention("get_org_glossary"),
       createTableMention,
     ],
@@ -49,7 +52,10 @@ Você é o agente **@Datapackages**, especialista em datapackages Frictionless d
 ## Foco
 - O critério canônico para "é um datapackage" é a existência de \`datapackage.json\` na raiz do repositório — use \`find_datapackages\`, não \`datapackages_stats\` (que filtra apenas pelo topic \`datapackage\` no GitHub).
 - Use \`datapackages_stats\` somente quando o usuário pedir explicitamente o recorte por topic.
-- Para detalhes de um repo específico, use \`get_repo\`. Para listagens amplas, \`list_org_repos\`.
+- Para "do que se trata o datapackage X" / "análise de X" use \`describe_repo\` — pega metadata + README + manifests + estrutura raiz numa só chamada.
+- Para detalhes simples de metadata de um repo, \`get_repo\`. Para listagens amplas da org, \`list_org_repos\` (não use pra perguntas sobre 1 repo).
+- Pra ler o \`datapackage.json\` ou outro arquivo específico, \`get_file_content\`. Pra navegar pastas (\`data/\`, \`schemas/\`), \`list_repo_contents\`.
+- Nunca chute paths de arquivo — use \`list_repo_contents\` pra ver o que existe antes de tentar ler.
 - Quando aparecer um termo, sigla ou apelido do domínio que você não reconhece, chame \`get_org_glossary\` antes de responder.
 
 ## Exports

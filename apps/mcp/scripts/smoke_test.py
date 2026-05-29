@@ -24,6 +24,7 @@ async def main() -> None:
         describe_repo,
         get_file_content,
         get_repo_readme,
+        list_repo_contents,
         repos_with_multiple_branches,
     )
     from gitinho_mcp.tools.users import list_org_members
@@ -74,13 +75,24 @@ async def main() -> None:
         described = await describe_repo("dpm")
         if described.get("ok"):
             meta = described.get("metadata") or {}
+            root = described.get("root_listing") or []
             print(
                 f"\ndescribe_repo(dpm): ok lang={meta.get('language')} "
                 f"readme={described.get('readme_size_bytes')}B "
-                f"aux_found={described.get('aux_files_found')}"
+                f"aux_found={described.get('aux_files_found')} "
+                f"root_entries={len(root)}"
             )
         else:
             print(f"\ndescribe_repo(dpm): FAIL {described}")
+
+        listing = await list_repo_contents("dpm", "src")
+        if listing.get("ok"):
+            print(
+                f"\nlist_repo_contents(dpm, src): ok total={listing['total']} "
+                f"sample={[e['name'] for e in listing['entries'][:5]]}"
+            )
+        else:
+            print(f"\nlist_repo_contents(dpm, src): {listing}")
     finally:
         await aclose()
 
