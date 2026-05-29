@@ -14,7 +14,9 @@ Exemplos de perguntas que o Gitinho responde com precisão:
 - Liste todos os repositórios com campos X, Y, Z em uma planilha.
 - Qual o último commit do usuário Z no repo B?
 - Quais repositórios não recebem atualização há mais de N dias?
-- Sobre o que é o repo X? (lê o README direto do GitHub)
+- Sobre o que é o repo X? (chama `describe_repo`: junta metadata,
+  README, `docs/index.md` do mkdocs e manifests como `pyproject.toml`
+  numa única resposta)
 - Mostre o `mkdocs.yml` / `datapackage.json` / `pyproject.toml` do
   repo X.
 - Relatório completo de atividade por usuário (issues, commits, PRs,
@@ -29,10 +31,12 @@ Monorepo (pnpm workspace + uv workspace):
   [`cgoinglove/better-chatbot`](https://github.com/cgoinglove/better-chatbot)
   (Next.js 16, Vercel AI SDK, Better Auth, Drizzle ORM, Postgres).
 - **`apps/mcp/`** — servidor [MCP](https://modelcontextprotocol.io)
-  Python (`gitinho-mcp`) expondo **24 tools read-only** sobre a API do
+  Python (`gitinho-mcp`) expondo **25 tools read-only** sobre a API do
   GitHub (repos, issues, PRs, commits, discussions, atividade,
-  glossário, conteúdo de arquivos, ingest de documentos). Usa GitHub
-  App para acesso autenticado.
+  glossário, conteúdo de arquivos, ingest de documentos). Inclui o
+  orquestrador `describe_repo` que junta metadata + README +
+  manifests numa única chamada — usado para responder "do que se
+  trata o repo X?". Usa GitHub App para acesso autenticado.
 
 A separação chat/MCP isola toda a lógica GitHub-específica do frontend,
 permite reusar as tools fora do chat (CLI, cron, CI) e abre a porta para

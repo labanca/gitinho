@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 from datetime import datetime, timedelta, timezone
@@ -475,3 +476,130 @@ async def get_file_content(
     if not isinstance(data, dict):
         return {"ok": False, "error": "unexpected response shape"}
     return _decode_content_payload(data, ref)
+
+
+# Files commonly carrying repo-purpose information, tried best-effort by
+# describe_repo. Order matters for readability of the response, not for
+# semantics. Each one is optional — describe_repo never fails because a
+# file is missing.
+_DESCRIBE_REPO_AUX_FILES: tuple[str, ...] = (
+    "docs/index.md",       # MkDocs landing page — usually the canonical description
+    "docs/README.md",      # alternative MkDocs entry
+    "mkdocs.yml",          # site_name + nav, useful even if rendered docs aren't fetched
+    "pyproject.toml",      # Python project metadata (name, description, deps)
+    "package.json",        # Node project metadata
+    "datapackage.json",    # Frictionless Data datapackage descriptor
+    "requirements.txt",    # Python deps fallback (when no pyproject)
+)
+
+
+async def _safe_get_repo_meta(ctx: ToolContext, name: str) -> dict[str, Any] | None:
+    """get_repo wrapper for describe_repo: swallow 404s, surface None."""
+    try:
+        data = await ctx.gh.get(f"/repos/{ctx.org}/{name}", owner=ctx.org)
+    except httpx.HTTPStatusError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    keys = [
+        "name", "full_name", "private", "description", "fork", "archived",
+        "default_branch", "language", "stargazers_count", "forks_count",
+        "open_issues_count", "topics", "pushed_at", "updated_at",
+        "created_at", "html_url", "size", "homepage",
+    ]
+    return {k: data.get(k) for k in keys}
+
+
+async def _safe_get_readme(ctx: ToolContext, name: str) -> dict[str, Any] | None:
+    """get_repo_readme wrapper for describe_repo: returns the decoded
+    envelope on success, None when missing."""
+    try:
+        data = await ctx.gh.get(f"/repos/{ctx.org}/{name}/readme", owner=ctx.org)
+    except httpx.HTTPStatusError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    decoded = _decode_content_payload(data, ref=None)
+    return decoded if decoded.get("ok") else None
+
+
+async def _safe_get_file(
+    ctx: ToolContext, repo_name: str, path: str
+) -> dict[str, Any] | None:
+    """get_file_content wrapper for describe_repo: returns decoded text
+    envelope on success, None when missing or undecodable."""
+    encoded = quote(path, safe="/")
+    try:
+        data = await ctx.gh.get(
+            f"/repos/{ctx.org}/{repo_name}/contents/{encoded}",
+            owner=ctx.org,
+        )
+    except httpx.HTTPStatusError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    decoded = _decode_content_payload(data, ref=None)
+    return decoded if decoded.get("ok") else None
+
+
+@mcp.tool()
+async def describe_repo(repo: str) -> dict[str, Any]:
+    """One-call full description of a repository — purpose, content, manifests.
+
+    **USE THIS for any question of the form "what is the repo X about",
+    "describe repo X", "do que se trata X", "what does X do".**
+
+    Prefer this over chaining `get_repo` + `get_repo_readme` +
+    `get_file_content` manually — one call fetches everything in
+    parallel and tolerates missing pieces:
+
+    - `metadata` — owner/visibility/language/dates/stars (same shape as
+      `get_repo`).
+    - `readme` — README.md decoded as text (or `null` if absent).
+    - `aux_files` — dict mapping filename → decoded text for files
+      commonly carrying purpose info: `docs/index.md` (MkDocs landing
+      page — frequently *the* canonical description), `docs/README.md`,
+      `mkdocs.yml`, `pyproject.toml`, `package.json`,
+      `datapackage.json`, `requirements.txt`. Each entry is the text
+      content or `null` if missing.
+
+    Do **not** call `convert_document` to "fetch a URL" — that tool is
+    only for files uploaded by the user in the chat. To learn about a
+    repo, always use this tool.
+
+    Errors are returned as `{"ok": false, "error": "repo not found"}`
+    when the repo itself is missing. Individual missing files do not
+    cause an error.
+
+    The owner is always the configured organization — pass only the
+    repo name.
+    """
+    ctx = await get_context()
+    safe = _safe_repo_name(repo)
+
+    meta_task = asyncio.create_task(_safe_get_repo_meta(ctx, safe))
+    readme_task = asyncio.create_task(_safe_get_readme(ctx, safe))
+    aux_tasks = {
+        path: asyncio.create_task(_safe_get_file(ctx, safe, path))
+        for path in _DESCRIBE_REPO_AUX_FILES
+    }
+
+    metadata, readme = await asyncio.gather(meta_task, readme_task)
+    aux_results = await asyncio.gather(*aux_tasks.values())
+    aux_files = {
+        path: (entry["content"] if entry else None)
+        for path, entry in zip(aux_tasks.keys(), aux_results)
+    }
+
+    if metadata is None and readme is None and not any(aux_files.values()):
+        return {"ok": False, "error": "repo not found", "repo": safe}
+
+    return {
+        "ok": True,
+        "repo": safe,
+        "metadata": metadata,
+        "readme": readme["content"] if readme else None,
+        "readme_size_bytes": readme["size_bytes"] if readme else None,
+        "aux_files": aux_files,
+        "aux_files_found": [p for p, c in aux_files.items() if c is not None],
+    }

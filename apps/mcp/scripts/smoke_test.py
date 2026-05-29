@@ -21,6 +21,7 @@ async def main() -> None:
     from gitinho_mcp.tools.issues import count_open_issues
     from gitinho_mcp.tools.repos import (
         count_repos,
+        describe_repo,
         get_file_content,
         get_repo_readme,
         repos_with_multiple_branches,
@@ -69,6 +70,17 @@ async def main() -> None:
 
         missing = await get_file_content("gitinho", "does-not-exist.txt")
         print(f"\nget_file_content(missing file): {missing}")
+
+        described = await describe_repo("dpm")
+        if described.get("ok"):
+            meta = described.get("metadata") or {}
+            print(
+                f"\ndescribe_repo(dpm): ok lang={meta.get('language')} "
+                f"readme={described.get('readme_size_bytes')}B "
+                f"aux_found={described.get('aux_files_found')}"
+            )
+        else:
+            print(f"\ndescribe_repo(dpm): FAIL {described}")
     finally:
         await aclose()
 

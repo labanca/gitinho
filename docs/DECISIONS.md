@@ -4,6 +4,66 @@
 > que** foi decidido, **por que**, e **alternativas consideradas**. Use
 > este log para entender o histórico antes de mudar algo estrutural.
 
+## 2026-05-29 — Orquestrador `describe_repo` (segunda iteração)
+
+Logo após adicionar `get_repo_readme` + `get_file_content` (entrada
+abaixo), observamos em produção que o LLM **não invocava** as tools
+novas para perguntas tipo "do que se trata o repo X?". Em vez disso
+caía em `convert_document` (tool de ingest de upload — não fetcha
+URL nem nada remoto), chutava ler o site mkdocs sem ter tool pra
+isso, e respondia "não sei" mesmo com o README disponível.
+
+Diagnóstico: dar três tools compostáveis (`get_repo` + `get_repo_readme`
++ `get_file_content`) coloca o ônus de orquestração no LLM, e ele
+falha. Para o README do `dpm` (777 B = título + badges) uma chamada
+sozinha é insuficiente — a descrição real está em `pyproject.toml`
+e nas páginas mkdocs (`docs/index.md`).
+
+Resposta: tool orquestradora `describe_repo(repo)` que numa única
+chamada (paralelizada via `asyncio.gather`) busca:
+
+- metadata (`get_repo`)
+- README via `/readme`
+- `docs/index.md`, `docs/README.md` — landing pages do MkDocs
+- `mkdocs.yml` — site_name + nav, útil mesmo sem renderizar HTML
+- `pyproject.toml`, `package.json`, `datapackage.json`,
+  `requirements.txt` — manifests com descrição/dependências
+
+Tolerante a falhas individuais: arquivo ausente vira `null` no dict,
+nunca quebra a chamada. Docstring agressiva ("USE THIS for …", "Do
+**not** call `convert_document` to fetch a URL") guia o LLM.
+
+Total subiu de 24 para 25 tools.
+
+### Por que não foi suficiente só atualizar a docstring
+
+A docstring de `get_repo_readme` já dizia "use whenever a user asks
+what a repo is about". Em produção o LLM ainda errou. Razões
+prováveis:
+
+1. **Espaço de decisão grande**. Com 24 tools, o LLM tem muitas
+   opções erradas (`get_repo`, `search_issues`, `convert_document`,
+   etc.) com nomes que parecem plausíveis.
+2. **README sozinho é insuficiente para alguns repos**. Mesmo se o LLM
+   chamasse `get_repo_readme`, o `dpm` daria 777 B inúteis.
+
+Orquestrador resolve as duas: uma tool com nome explícito do uso
+(`describe_repo`), e ela já busca em paralelo todos os arquivos que
+juntos formam uma resposta substantiva.
+
+### Alternativas consideradas
+
+- **Só reescrever a docstring** de `get_repo_readme` mais agressiva.
+  Descartado: não resolve o caso `dpm` onde README é insuficiente.
+- **Tool `fetch_url`** para puxar a página renderizada do mkdocs.
+  Descartado pela mesma razão da entrada abaixo (escapa do allowlist
+  de org). E os arquivos-fonte (`docs/*.md`) já vêm pela API de
+  contents da própria org.
+- **Fetch dinâmico do `nav` do mkdocs.yml** para ler todas as páginas
+  documentadas. Adiável: complexidade extra (parse YAML, recursão por
+  N páginas) que ainda não se justifica — README + `docs/index.md` +
+  manifests resolvem o caso de uso.
+
 ## 2026-05-29 — Tools de leitura de conteúdo de arquivo
 
 Adicionadas duas tools ao `gitinho-mcp`:

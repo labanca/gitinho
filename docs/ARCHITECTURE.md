@@ -33,7 +33,7 @@ Monorepo com duas aplicações e dois serviços de infra:
 │  apps/mcp — gitinho-mcp (Python 3.12)                                │
 │  ┌────────────────────────────────────────────────────────────────┐  │
 │  │ FastMCP server (mcp SDK oficial)                               │  │
-│  │ 24 tools auto-registradas via @mcp.tool()                      │  │
+│  │ 25 tools auto-registradas via @mcp.tool()                      │  │
 │  │  ├── repos/users/issues/pulls/commits/discussions/activity     │  │
 │  │  ├── glossary (lê <org>/.github/gitinho-context.md)            │  │
 │  │  └── documents (MarkItDown)                                    │  │
