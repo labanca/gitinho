@@ -90,7 +90,12 @@ const initialState: AppState = {
     AppDefaultToolkit.Visualization,
   ],
   toolPresets: [],
-  chatModel: undefined,
+  // Default selected model for fresh sessions (no persisted localStorage).
+  // Sonnet 4.6 is the right baseline for tool orchestration; see
+  // `lib/ai/models.ts` (`fallbackModel`) for the server-side mirror.
+  // Persisted choices from prior sessions still win over this default —
+  // users can pick anything else and it sticks.
+  chatModel: { provider: "anthropic", model: "sonnet-4.6" },
   openShortcutsPopup: false,
   openChatPreferences: false,
   mcpCustomizationPopup: undefined,
