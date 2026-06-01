@@ -18,7 +18,9 @@ import { DEFAULT_USER_ROLE, USER_ROLES } from "app-types/roles";
 import { admin, editor, user, ac } from "./roles";
 import {
   assertGitHubOrgMembership,
+  assertGitHubUserAllowed,
   getAllowedOrg,
+  getAllowedUsers,
 } from "./github-org-allowlist";
 
 const {
@@ -47,6 +49,11 @@ async function enforceGitHubOrgAllowlist(account: {
     );
   }
   await assertGitHubOrgMembership(account.accessToken, getAllowedOrg());
+
+  const allowedUsers = getAllowedUsers();
+  if (allowedUsers.length > 0) {
+    await assertGitHubUserAllowed(account.accessToken, allowedUsers);
+  }
 }
 
 function stripOAuthTokens<T extends Record<string, unknown>>(account: T): T {

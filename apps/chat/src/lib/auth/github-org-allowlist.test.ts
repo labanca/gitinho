@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   assertGitHubOrgMembership,
+  assertGitHubUserAllowed,
   getAllowedOrg,
+  getAllowedUsers,
 } from "./github-org-allowlist";
 
 vi.mock("logger", () => ({
@@ -98,5 +100,85 @@ describe("getAllowedOrg", () => {
     expect(() => getAllowedOrg()).toThrow(/ALLOWED_ORG/);
     process.env.ALLOWED_ORG = "   ";
     expect(() => getAllowedOrg()).toThrow(/ALLOWED_ORG/);
+  });
+});
+
+describe("getAllowedUsers", () => {
+  const originalEnv = process.env.ALLOWED_USERS;
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.ALLOWED_USERS;
+    } else {
+      process.env.ALLOWED_USERS = originalEnv;
+    }
+  });
+
+  it("returns an empty list when env is unset or blank", () => {
+    delete process.env.ALLOWED_USERS;
+    expect(getAllowedUsers()).toEqual([]);
+    process.env.ALLOWED_USERS = "   ";
+    expect(getAllowedUsers()).toEqual([]);
+  });
+
+  it("parses a CSV, trims, and drops empty entries", () => {
+    process.env.ALLOWED_USERS = " alice ,bob ,  ,carol,";
+    expect(getAllowedUsers()).toEqual(["alice", "bob", "carol"]);
+  });
+
+  it("preserves a single login", () => {
+    process.env.ALLOWED_USERS = "labanca";
+    expect(getAllowedUsers()).toEqual(["labanca"]);
+  });
+});
+
+describe("assertGitHubUserAllowed", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("resolves when the user login is in the allowlist", async () => {
+    mockFetchOnce({ body: { login: "alice" } });
+    await expect(
+      assertGitHubUserAllowed(TOKEN, ["alice", "bob"]),
+    ).resolves.toBeUndefined();
+  });
+
+  it("matches case-insensitively", async () => {
+    mockFetchOnce({ body: { login: "Alice" } });
+    await expect(
+      assertGitHubUserAllowed(TOKEN, ["ALICE"]),
+    ).resolves.toBeUndefined();
+  });
+
+  it("throws a user-facing error when the login is not in the allowlist", async () => {
+    mockFetchOnce({ body: { login: "carol" } });
+    await expect(
+      assertGitHubUserAllowed(TOKEN, ["alice", "bob"]),
+    ).rejects.toThrow(/@carol ainda não está liberado/);
+  });
+
+  it("throws when GitHub returns a non-ok response", async () => {
+    mockFetchOnce({ status: 502, body: { message: "Bad gateway" } });
+    await expect(
+      assertGitHubUserAllowed(TOKEN, ["alice"]),
+    ).rejects.toThrow(/verificar seu usuário/);
+  });
+
+  it("sends the access token as a bearer credential", async () => {
+    const spy = mockFetchOnce({ body: { login: "alice" } });
+    await assertGitHubUserAllowed(TOKEN, ["alice"]);
+    expect(spy).toHaveBeenCalledWith(
+      "https://api.github.com/user",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${TOKEN}`,
+        }),
+      }),
+    );
   });
 });
