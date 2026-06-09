@@ -15,6 +15,12 @@ const createTableMention = {
   label: DefaultToolName.CreateTable,
 };
 
+const validateListingCompletenessMention = {
+  type: "defaultTool" as const,
+  name: DefaultToolName.ValidateListingCompleteness,
+  label: DefaultToolName.ValidateListingCompleteness,
+};
+
 const mcpToolMention = (name: string) => ({
   type: "mcpTool" as const,
   name,
@@ -37,6 +43,7 @@ export const DatapackagesAgent: GitinhoAgentSpec = {
     role: "Frictionless Datapackages",
     mentions: [
       mcpToolMention("find_datapackages"),
+      mcpToolMention("list_datapackage_resources"),
       mcpToolMention("datapackages_stats"),
       mcpToolMention("list_org_repos"),
       mcpToolMention("get_repo"),
@@ -45,12 +52,14 @@ export const DatapackagesAgent: GitinhoAgentSpec = {
       mcpToolMention("get_file_content"),
       mcpToolMention("get_org_glossary"),
       createTableMention,
+      validateListingCompletenessMention,
     ],
     systemPrompt: `
 Você é o agente **@Datapackages**, especialista em datapackages Frictionless da organização splor-mg.
 
 ## Foco
 - O critério canônico para "é um datapackage" é a existência de \`datapackage.json\` na raiz do repositório — use \`find_datapackages\`, não \`datapackages_stats\` (que filtra apenas pelo topic \`datapackage\` no GitHub).
+- Para "todos os recursos de todos os datapackages" (inventário extensivo), use \`list_datapackage_resources\` — devolve a flat list autoritativa numa só chamada. NÃO chame \`find_datapackages\` + N \`get_file_content\` para montar isso à mão.
 - Use \`datapackages_stats\` somente quando o usuário pedir explicitamente o recorte por topic.
 - Para "do que se trata o datapackage X" / "análise de X" use \`describe_repo\` — pega metadata + README + manifests + estrutura raiz numa só chamada.
 - Para detalhes simples de metadata de um repo, \`get_repo\`. Para listagens amplas da org, \`list_org_repos\` (não use pra perguntas sobre 1 repo).
@@ -74,6 +83,8 @@ Antes de entregar a listagem, faça mentalmente este check:
 - [ ] resource-count check: para cada repo listado, nº de recursos bate com o manifesto (\`datapackage.json\`)?
 - [ ] no-filter check: aplicou algum filtro que o usuário não pediu?
 - [ ] explicit-request check: toda instrução explícita do usuário ("inclua repos sem datapackage", "todos os recursos", etc.) foi atendida?
+
+Para casos em que você montou a listagem a partir de múltiplas chamadas (ex.: \`list_org_repos\` + per-repo \`get_file_content\`), passe a listagem e os \`expected_sources\` (rows derivados direto do dado bruto upstream) para \`validateListingCompleteness\` — se ela retornar \`is_complete: false\`, corrija e re-valide ANTES de entregar.
 
 Falhou algum item? Corrija antes de entregar. Não conseguiu corrigir numa só resposta? Avise e entregue parcial com as lacunas explícitas.
 
@@ -109,6 +120,7 @@ export const AtividadeAgent: GitinhoAgentSpec = {
       mcpToolMention("list_org_members"),
       mcpToolMention("get_org_glossary"),
       createTableMention,
+      validateListingCompletenessMention,
     ],
     systemPrompt: `
 Você é o agente **@Atividade**, especialista em relatórios de atividade da organização splor-mg.
@@ -137,6 +149,8 @@ Antes de entregar a listagem, faça mentalmente este check:
 - [ ] count check: nº de linhas da tabela bate com o total retornado pelas tools?
 - [ ] no-filter check: aplicou algum filtro que o usuário não pediu?
 - [ ] explicit-request check: toda instrução explícita do usuário foi atendida?
+
+Para listagens montadas a partir de múltiplas chamadas, passe \`listing\` + \`expected_sources\` para \`validateListingCompleteness\` antes de entregar — se retornar \`is_complete: false\`, corrija primeiro.
 
 Falhou algum item? Corrija antes de entregar. Não conseguiu corrigir numa só resposta? Avise e entregue parcial com as lacunas explícitas.
 

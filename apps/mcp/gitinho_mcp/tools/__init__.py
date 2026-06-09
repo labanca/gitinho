@@ -4,6 +4,7 @@ from gitinho_mcp.tools import (  # noqa: F401
     activity,
     comments,
     commits,
+    datapackages,
     discussions,
     documents,
     glossary,
