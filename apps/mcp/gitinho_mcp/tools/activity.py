@@ -9,6 +9,7 @@ from typing import Any
 from gitinho_mcp.github.graphql import ORG_ID, ORG_MEMBERS, USER_CONTRIBUTIONS
 from gitinho_mcp.server import mcp
 from gitinho_mcp.tools._context import ToolContext, get_context
+from gitinho_mcp.tools.comments import list_comments_by_user
 
 _ONE_YEAR = timedelta(days=365)
 
@@ -48,23 +49,11 @@ async def _user_activity_summary(
     )
     coll = (contrib.get("user") or {}).get("contributionsCollection") or {}
 
-    async def _count(q_extra: str) -> int:
-        q = f"{q_extra} org:{ctx.org} commenter:{login}"
-        res = await ctx.gh.get(
-            "/search/issues", params={"q": q, "per_page": 1}, owner=ctx.org
-        )
-        return (res or {}).get("total_count", 0) if isinstance(res, dict) else 0
-
-    range_q = ""
-    if since:
-        range_q += f" created:>={since}"
-    if until:
-        range_q += f" created:<={until}"
-    issue_comments_q = f"is:issue{range_q}"
-    pr_comments_q = f"is:pr{range_q}"
-    issue_comments, pr_comments = await asyncio.gather(
-        _count(issue_comments_q),
-        _count(pr_comments_q),
+    issue_comments, issue_q = await list_comments_by_user(
+        ctx, "issue", login, sfrom, suntil, max_results=1000
+    )
+    pr_comments, pr_q = await list_comments_by_user(
+        ctx, "pr", login, sfrom, suntil, max_results=1000
     )
 
     return {
@@ -77,8 +66,25 @@ async def _user_activity_summary(
         "prs_created": coll.get("totalPullRequestContributions", 0),
         "pr_reviews": coll.get("totalPullRequestReviewContributions", 0),
         "repositories_created": coll.get("totalRepositoryContributions", 0),
-        "issue_comments_in_org": issue_comments,
-        "pr_comments_in_org": pr_comments,
+        "issue_comments_authored": len(issue_comments),
+        "pr_comments_authored": len(pr_comments),
+        "source_query": {
+            "commits": "GraphQL user.contributionsCollection.totalCommitContributions",
+            "issues_created": "GraphQL user.contributionsCollection.totalIssueContributions",
+            "prs_created": "GraphQL user.contributionsCollection.totalPullRequestContributions",
+            "pr_reviews": "GraphQL user.contributionsCollection.totalPullRequestReviewContributions",
+            "repositories_created": "GraphQL user.contributionsCollection.totalRepositoryContributions",
+            "issue_comments_authored": (
+                f"search candidates: '{issue_q}' "
+                "then REST /repos/{owner}/{repo}/issues/{n}/comments "
+                "filtered by user.login + created_at in [since, until]"
+            ),
+            "pr_comments_authored": (
+                f"search candidates: '{pr_q}' "
+                "then REST /repos/{owner}/{repo}/issues/{n}/comments "
+                "filtered by user.login + created_at in [since, until]"
+            ),
+        },
     }
 
 
@@ -90,9 +96,15 @@ async def user_activity_summary(
 ) -> dict[str, Any]:
     """Activity counts for a user inside the org for a date range.
 
-    Uses GitHub's `contributionsCollection` (precise), plus searches to
-    cover issue/PR comments. `since` / `until` are ISO dates; both default
-    to a 365-day window ending now.
+    Counts come from GitHub's `contributionsCollection` (commits, issues,
+    PRs, reviews) plus per-comment REST iteration for accurate
+    `issue_comments_authored` / `pr_comments_authored`. `since` / `until`
+    are ISO dates; both default to a 365-day window ending now.
+
+    The returned `source_query` field documents which endpoint/query
+    produced each metric — use it to reconcile numbers against the raw
+    `list_issue_comments_by_user` / `list_pr_comments_by_user` tools when
+    something looks off.
     """
     ctx = await get_context()
     return await _user_activity_summary(ctx, login, since, until)
@@ -104,12 +116,17 @@ async def org_users_activity_report(
     until: str | None = None,
     max_members: int = 200,
 ) -> dict[str, Any]:
-    """Full activity report: per-member counts of issues/PRs/commits/reviews.
+    """Per-member activity report from GitHub's `contributionsCollection`.
 
-    Returns rows ready for spreadsheet export. Bounded concurrency keeps
-    this gentle on GitHub's rate limits.
+    Comment counts are intentionally NOT included here — accurate per-user
+    comment counting requires per-issue REST iteration that scales poorly
+    across the whole membership. Use `user_activity_summary` or the
+    `list_*_comments_by_user` tools for that.
     """
     ctx = await get_context()
+    org_id = await _org_node_id(ctx)
+    sfrom = _to_iso(since)
+    suntil = _to_iso(until, end=True)
 
     members: list[dict[str, Any]] = []
     cursor: str | None = None
@@ -127,25 +144,25 @@ async def org_users_activity_report(
 
     async def _one(member: dict[str, Any]) -> dict[str, Any]:
         async with sem:
-            summary = await _user_activity_summary(
-                ctx, member["login"], since, until
+            contrib = await ctx.gh.graphql(
+                USER_CONTRIBUTIONS,
+                {"login": member["login"], "from": sfrom, "to": suntil, "org": org_id},
             )
+            coll = (contrib.get("user") or {}).get("contributionsCollection") or {}
             return {
                 "login": member["login"],
                 "name": member.get("name"),
-                "commits": summary["commits"],
-                "issues_created": summary["issues_created"],
-                "prs_created": summary["prs_created"],
-                "pr_reviews": summary["pr_reviews"],
-                "issue_comments": summary["issue_comments_in_org"],
-                "pr_comments": summary["pr_comments_in_org"],
+                "commits": coll.get("totalCommitContributions", 0),
+                "issues_created": coll.get("totalIssueContributions", 0),
+                "prs_created": coll.get("totalPullRequestContributions", 0),
+                "pr_reviews": coll.get("totalPullRequestReviewContributions", 0),
             }
 
     rows = await asyncio.gather(*[_one(m) for m in members])
     return {
         "org": ctx.org,
-        "since": since,
-        "until": until,
+        "since": sfrom,
+        "until": suntil,
         "members_total": len(rows),
         "rows": rows,
     }

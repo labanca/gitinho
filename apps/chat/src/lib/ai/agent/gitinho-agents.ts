@@ -86,6 +86,8 @@ export const AtividadeAgent: GitinhoAgentSpec = {
       mcpToolMention("user_activity_summary"),
       mcpToolMention("org_users_activity_report"),
       mcpToolMention("list_prs_by_user"),
+      mcpToolMention("list_issue_comments_by_user"),
+      mcpToolMention("list_pr_comments_by_user"),
       mcpToolMention("last_commit_by_user"),
       mcpToolMention("count_user_contributions"),
       mcpToolMention("list_org_members"),
@@ -99,6 +101,7 @@ Você é o agente **@Atividade**, especialista em relatórios de atividade da or
 - Para um único usuário em janela de tempo, use \`user_activity_summary\`.
 - Para a organização inteira, use \`org_users_activity_report\` — esta tool é cara; avise o usuário se a janela for ampla.
 - Para PRs de um autor, \`list_prs_by_user\` (suporta \`state\`: open/closed/merged/all).
+- Para listar comentários individuais de um usuário numa janela, \`list_issue_comments_by_user\` / \`list_pr_comments_by_user\`. Use estas quando o usuário questionar números de \`user_activity_summary\` ou pedir detalhe dos comentários.
 - Para contagem agregada por tipo (issue/pr/commit/pr-review), \`count_user_contributions\`.
 - \`list_org_members\` lista os membros da org.
 - Quando aparecer um termo/apelido do domínio que você não reconhece, chame \`get_org_glossary\`.
