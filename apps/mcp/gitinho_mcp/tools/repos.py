@@ -12,7 +12,7 @@ from urllib.parse import quote
 import httpx
 from pydantic import BaseModel
 
-from gitinho_mcp.github.graphql import ORG_REPOS_PAGE
+from gitinho_mcp.github.graphql import ORG_REPOS_PAGE, ORG_REPOS_WITH_DATAPACKAGE
 from gitinho_mcp.server import mcp
 from gitinho_mcp.tools._context import ToolContext, get_context
 
@@ -83,27 +83,6 @@ async def _all_repos(ctx: ToolContext) -> list[RepoSummary]:
         if not page["pageInfo"]["hasNextPage"]:
             break
         cursor = page["pageInfo"]["endCursor"]
-    return out
-
-
-async def _code_search_all(
-    ctx: ToolContext, query: str, max_items: int = 500
-) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    page = 1
-    per_page = 100
-    while len(out) < max_items:
-        data = await ctx.gh.get(
-            "/search/code",
-            params={"q": query, "per_page": per_page, "page": page},
-        )
-        if not isinstance(data, dict):
-            break
-        items = data.get("items") or []
-        out.extend(items)
-        if len(items) < per_page:
-            break
-        page += 1
     return out
 
 
@@ -234,50 +213,59 @@ async def find_datapackages(include_archived: bool = False) -> dict[str, Any]:
     file `datapackage.json` at the repository root (per the Frictionless
     Data specification, https://frictionlessdata.io).
 
+    Uses GraphQL `repository.object(expression: "HEAD:datapackage.json")`
+    to check existence on every org repo in one paginated query — does
+    NOT use `/search/code`, which is index-based, misses recently created
+    private repos, and silently omits results. The result is exhaustive
+    and deterministic.
+
     Use this tool for ANY question about datapackages / frictionless /
     "data packages" of the organization, unless the user explicitly asks
     to filter by GitHub topic (in which case use `datapackages_stats`).
     """
     ctx = await get_context()
-    items = await _code_search_all(
-        ctx, f"filename:datapackage.json org:{ctx.org}"
-    )
-    by_repo: dict[str, dict[str, Any]] = {}
-    for item in items:
-        if item.get("path") != "datapackage.json":
-            continue
-        repo = item.get("repository") or {}
-        full_name = repo.get("full_name")
-        if not full_name or full_name in by_repo:
-            continue
-        by_repo[full_name] = {
-            "name": full_name,
-            "private": repo.get("private"),
-            "archived": None,
-            "url": repo.get("html_url"),
-            "description": repo.get("description"),
-        }
-
-    try:
-        all_repos = {r.name_with_owner: r for r in await _all_repos(ctx)}
-    except Exception:  # noqa: BLE001
-        all_repos = {}
-
     enriched: list[dict[str, Any]] = []
-    for full_name, info in by_repo.items():
-        r = all_repos.get(full_name)
-        if r is not None:
-            info["archived"] = r.is_archived
-            info["last_push"] = r.pushed_at
-            info["default_branch"] = r.default_branch
-            info["topics"] = r.topics
-        if not include_archived and info.get("archived"):
-            continue
-        enriched.append(info)
+    cursor: str | None = None
+    while True:
+        data = await ctx.gh.graphql(
+            ORG_REPOS_WITH_DATAPACKAGE, {"org": ctx.org, "after": cursor}
+        )
+        page = data["organization"]["repositories"]
+        for node in page["nodes"]:
+            if node.get("datapackage") is None:
+                continue
+            if not include_archived and node.get("isArchived"):
+                continue
+            enriched.append(
+                {
+                    "name": node["nameWithOwner"],
+                    "private": node.get("isPrivate"),
+                    "archived": node.get("isArchived"),
+                    "url": node.get("url"),
+                    "description": node.get("description"),
+                    "last_push": node.get("pushedAt"),
+                    "default_branch": (
+                        (node.get("defaultBranchRef") or {}).get("name")
+                    ),
+                    "topics": [
+                        n["topic"]["name"]
+                        for n in (
+                            node.get("repositoryTopics", {}).get("nodes") or []
+                        )
+                    ],
+                    "datapackage_size_bytes": (node["datapackage"] or {}).get(
+                        "byteSize"
+                    ),
+                }
+            )
+        if not page["pageInfo"]["hasNextPage"]:
+            break
+        cursor = page["pageInfo"]["endCursor"]
 
     enriched.sort(key=lambda x: x.get("last_push") or "", reverse=True)
     return {
         "criterion": "datapackage.json at repo root (Frictionless Data spec)",
+        "source": "GraphQL repository.object(HEAD:datapackage.json) — exhaustive",
         "org": ctx.org,
         "total": len(enriched),
         "public": sum(1 for r in enriched if r.get("private") is False),

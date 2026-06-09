@@ -130,6 +130,30 @@ query OrgId($org: String!) {
 }
 """
 
+ORG_REPOS_WITH_DATAPACKAGE = """
+query OrgReposWithDatapackage($org: String!, $after: String) {
+  organization(login: $org) {
+    repositories(first: 100, after: $after, orderBy: {field: PUSHED_AT, direction: DESC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        name
+        nameWithOwner
+        description
+        isPrivate
+        isArchived
+        url
+        pushedAt
+        defaultBranchRef { name }
+        repositoryTopics(first: 20) { nodes { topic { name } } }
+        datapackage: object(expression: "HEAD:datapackage.json") {
+          ... on Blob { byteSize }
+        }
+      }
+    }
+  }
+}
+"""
+
 ORG_DISCUSSIONS = """
 query OrgDiscussions($org: String!, $after: String) {
   organization(login: $org) {
