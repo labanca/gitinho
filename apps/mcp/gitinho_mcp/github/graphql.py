@@ -148,12 +148,6 @@ query OrgReposWithDatapackage($org: String!, $after: String) {
         datapackageJson: object(expression: "HEAD:datapackage.json") {
           ... on Blob { byteSize }
         }
-        datapackageYaml: object(expression: "HEAD:datapackage.yaml") {
-          ... on Blob { byteSize }
-        }
-        datapackageYml: object(expression: "HEAD:datapackage.yml") {
-          ... on Blob { byteSize }
-        }
       }
     }
   }

@@ -16,6 +16,32 @@ class OrgAllowlistError(RuntimeError):
     """Raised when a request would target an owner outside ALLOWED_ORG."""
 
 
+class GitHubAuthRejected(RuntimeError):
+    """Raised when GitHub returns 401 for an authenticated request.
+
+    Gitinho authenticates as a GitHub App installation (NOT a user PAT), so
+    this almost never means the operator needs to rotate a personal token.
+    The two real causes are:
+      - GitHub abuse-protection (often follows 5xx storms on heavy queries)
+      - the App installation having been revoked/removed on the org side
+    The error message spells this out so the chat agent doesn't suggest the
+    user fix a PAT that doesn't exist in this architecture.
+    """
+
+    @classmethod
+    def for_endpoint(cls, endpoint: str, saw_5xx: bool) -> GitHubAuthRejected:
+        cause = (
+            "likely GitHub abuse-protection — heavy/expensive queries can "
+            "trigger a 401 after the server times out (5xx). Retry in a "
+            "few seconds, and reduce query weight if it persists."
+            if saw_5xx
+            else "the App installation token was rejected. Verify the "
+            "GitHub App is still installed on the org with the required "
+            "permissions; this is NOT a user-fixable PAT issue."
+        )
+        return cls(f"GitHub {endpoint} 401 Unauthorized — {cause}")
+
+
 class GitHubClient:
     def __init__(self, settings: Settings, auth: GitHubAppAuth | None = None) -> None:
         self._settings = settings
@@ -75,6 +101,7 @@ class GitHubClient:
         json: Any = None,
     ) -> Any:
         url = f"{self.api_base}{path}" if path.startswith("/") else path
+        saw_5xx = False
         for attempt in range(4):
             headers = await self._headers()
             resp = await self._http.request(
@@ -84,8 +111,13 @@ class GitHubClient:
                 await asyncio.sleep(self._retry_after(resp, attempt))
                 continue
             if resp.status_code >= 500 and attempt < 3:
+                saw_5xx = True
                 await asyncio.sleep(2**attempt)
                 continue
+            if resp.status_code == 401:
+                raise GitHubAuthRejected.for_endpoint(
+                    f"REST {method} {path}", saw_5xx
+                )
             resp.raise_for_status()
             return resp.json() if resp.content else None
         raise httpx.HTTPError(f"Failed after retries: {method} {path}")
@@ -161,6 +193,7 @@ class GitHubClient:
     async def graphql(
         self, query: str, variables: dict[str, Any] | None = None
     ) -> dict:
+        saw_5xx = False
         for attempt in range(4):
             headers = await self._headers()
             resp = await self._http.post(
@@ -169,8 +202,11 @@ class GitHubClient:
                 headers=headers,
             )
             if resp.status_code >= 500 and attempt < 3:
+                saw_5xx = True
                 await asyncio.sleep(2**attempt)
                 continue
+            if resp.status_code == 401:
+                raise GitHubAuthRejected.for_endpoint("GraphQL", saw_5xx)
             resp.raise_for_status()
             data = resp.json()
             if "errors" in data:

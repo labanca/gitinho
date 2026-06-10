@@ -16,12 +16,11 @@ from typing import Any
 import httpx
 import yaml
 
-from gitinho_mcp.github.graphql import ORG_REPOS_WITH_DATAPACKAGE
 from gitinho_mcp.server import mcp
 from gitinho_mcp.tools._context import ToolContext, get_context
 from gitinho_mcp.tools.repos import (
     _decode_content_payload,
-    detect_datapackage_manifest,
+    discover_datapackage_repos,
 )
 
 
@@ -128,25 +127,12 @@ async def list_datapackage_resources(
     """
     ctx = await get_context()
 
-    candidates: list[tuple[str, str, str]] = []  # (full_name, url, manifest_path)
-    cursor: str | None = None
-    while True:
-        data = await ctx.gh.graphql(
-            ORG_REPOS_WITH_DATAPACKAGE, {"org": ctx.org, "after": cursor}
-        )
-        page = data["organization"]["repositories"]
-        for node in page["nodes"]:
-            manifest_path, _ = detect_datapackage_manifest(node)
-            if manifest_path is None:
-                continue
-            if repo is not None and node["name"] != repo:
-                continue
-            if not include_archived and node.get("isArchived"):
-                continue
-            candidates.append((node["nameWithOwner"], node["url"], manifest_path))
-        if not page["pageInfo"]["hasNextPage"]:
-            break
-        cursor = page["pageInfo"]["endCursor"]
+    nodes = await discover_datapackage_repos(
+        ctx, include_archived=include_archived, repo_filter=repo
+    )
+    candidates: list[tuple[str, str, str]] = [
+        (n["nameWithOwner"], n["url"], n["manifest_path"]) for n in nodes
+    ]
 
     sem = asyncio.Semaphore(10)
     results = await asyncio.gather(

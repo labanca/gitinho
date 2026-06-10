@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import json as json_module
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
@@ -21,28 +22,120 @@ from gitinho_mcp.tools._context import ToolContext, get_context
 # would dominate the context window and rarely help answer the question.
 MAX_FILE_BYTES = 512 * 1024
 
-# Manifest filename preference order — JSON is the canonical Frictionless
-# format, but older repos in the org adopted YAML. Order matters: if a repo
-# has more than one, the first hit wins.
-DATAPACKAGE_MANIFEST_ALIASES: tuple[tuple[str, str], ...] = (
-    ("datapackageJson", "datapackage.json"),
-    ("datapackageYaml", "datapackage.yaml"),
-    ("datapackageYml", "datapackage.yml"),
-)
 
-
-def detect_datapackage_manifest(
-    node: dict[str, Any],
-) -> tuple[str | None, int | None]:
-    """Return (filename, byte_size) for the manifest present on a repo node
-    from ORG_REPOS_WITH_DATAPACKAGE, or (None, None) if none exists. Prefers
-    JSON over YAML when more than one is present.
+def _build_yaml_check_query(repo_names: list[str]) -> str:
+    """Build a single GraphQL query with N aliased `repository(name:)` lookups
+    that test for datapackage.yaml / datapackage.yml at the repo root. Used as
+    a cheap follow-up pass after the main discovery query (which only checks
+    JSON). Names are JSON-encoded to defuse any odd characters.
     """
-    for alias, filename in DATAPACKAGE_MANIFEST_ALIASES:
-        obj = node.get(alias)
-        if obj is not None:
-            return filename, obj.get("byteSize")
+    parts = []
+    for j, name in enumerate(repo_names):
+        safe_name = json_module.dumps(name)
+        parts.append(
+            f"r{j}: repository(owner: $org, name: {safe_name}) {{ "
+            f'yaml: object(expression: "HEAD:datapackage.yaml") '
+            f"{{ ... on Blob {{ byteSize }} }} "
+            f'yml: object(expression: "HEAD:datapackage.yml") '
+            f"{{ ... on Blob {{ byteSize }} }} "
+            f"}}"
+        )
+    return "query CheckYaml($org: String!) { " + " ".join(parts) + " }"
+
+
+async def _fetch_yaml_manifests(
+    ctx: ToolContext, repo_names: list[str], chunk_size: int = 40
+) -> dict[str, tuple[dict[str, Any] | None, dict[str, Any] | None]]:
+    """Batched yaml/yml existence check. Returns {name: (yaml_obj, yml_obj)}.
+    yaml_obj/yml_obj are GraphQL Blob dicts ({"byteSize": int}) or None when
+    absent. Chunked to keep each request well under GitHub's GraphQL cost
+    threshold (chunks of ~40 repos with 2 object lookups each = 80 per query).
+    """
+    result: dict[str, tuple[dict[str, Any] | None, dict[str, Any] | None]] = {}
+    for i in range(0, len(repo_names), chunk_size):
+        chunk = repo_names[i : i + chunk_size]
+        data = await ctx.gh.graphql(
+            _build_yaml_check_query(chunk), {"org": ctx.org}
+        )
+        for j, name in enumerate(chunk):
+            repo_data = data.get(f"r{j}") or {}
+            result[name] = (repo_data.get("yaml"), repo_data.get("yml"))
+    return result
+
+
+def _resolve_manifest(
+    node: dict[str, Any],
+    yaml_lookup: dict[str, tuple[dict[str, Any] | None, dict[str, Any] | None]],
+) -> tuple[str | None, int | None]:
+    """Pick the manifest variant present on a repo, preferring JSON over YAML.
+    Returns (filename, byte_size) or (None, None) when no manifest exists.
+    `node` is from the main discovery query (carries `datapackageJson`);
+    `yaml_lookup` is the result of `_fetch_yaml_manifests` for non-JSON repos.
+    """
+    json_obj = node.get("datapackageJson")
+    if json_obj is not None:
+        return "datapackage.json", json_obj.get("byteSize")
+    yaml_obj, yml_obj = yaml_lookup.get(node["name"], (None, None))
+    if yaml_obj is not None:
+        return "datapackage.yaml", yaml_obj.get("byteSize")
+    if yml_obj is not None:
+        return "datapackage.yml", yml_obj.get("byteSize")
     return None, None
+
+
+async def discover_datapackage_repos(
+    ctx: ToolContext,
+    include_archived: bool = False,
+    repo_filter: str | None = None,
+) -> list[dict[str, Any]]:
+    """Find every Frictionless datapackage in the org via a 2-phase scan:
+
+    1. Main GraphQL: paginate every org repo, grab metadata + check existence
+       of `datapackage.json` (one `object(expression:)` per node — light).
+    2. YAML follow-up: for repos that don't have JSON, batch-check
+       `datapackage.yaml` / `.yml` via a smaller aliased GraphQL query.
+
+    This avoids stacking 3 `object()` calls per node in the main query, which
+    in our org triggered GitHub-side timeouts (5xx → 401 abuse-protection).
+
+    Returns each repo node enriched with `manifest_path` (filename) and
+    `manifest_size` (byte count). Repos without any manifest are filtered out.
+    """
+    all_nodes: list[dict[str, Any]] = []
+    cursor: str | None = None
+    while True:
+        data = await ctx.gh.graphql(
+            ORG_REPOS_WITH_DATAPACKAGE, {"org": ctx.org, "after": cursor}
+        )
+        page = data["organization"]["repositories"]
+        for node in page["nodes"]:
+            if repo_filter is not None and node["name"] != repo_filter:
+                continue
+            if not include_archived and node.get("isArchived"):
+                continue
+            all_nodes.append(node)
+        if not page["pageInfo"]["hasNextPage"]:
+            break
+        cursor = page["pageInfo"]["endCursor"]
+
+    non_json_names = [
+        n["name"] for n in all_nodes if n.get("datapackageJson") is None
+    ]
+    yaml_lookup = (
+        await _fetch_yaml_manifests(ctx, non_json_names)
+        if non_json_names
+        else {}
+    )
+
+    out: list[dict[str, Any]] = []
+    for node in all_nodes:
+        manifest_path, manifest_size = _resolve_manifest(node, yaml_lookup)
+        if manifest_path is None:
+            continue
+        node["manifest_path"] = manifest_path
+        node["manifest_size"] = manifest_size
+        out.append(node)
+    return out
 
 
 class RepoSummary(BaseModel):
@@ -250,51 +343,41 @@ async def find_datapackages(include_archived: bool = False) -> dict[str, Any]:
     so downstream tools know which file to fetch.
     """
     ctx = await get_context()
-    enriched: list[dict[str, Any]] = []
-    cursor: str | None = None
-    while True:
-        data = await ctx.gh.graphql(
-            ORG_REPOS_WITH_DATAPACKAGE, {"org": ctx.org, "after": cursor}
-        )
-        page = data["organization"]["repositories"]
-        for node in page["nodes"]:
-            manifest_path, manifest_size = detect_datapackage_manifest(node)
-            if manifest_path is None:
-                continue
-            if not include_archived and node.get("isArchived"):
-                continue
-            enriched.append(
-                {
-                    "name": node["nameWithOwner"],
-                    "private": node.get("isPrivate"),
-                    "archived": node.get("isArchived"),
-                    "url": node.get("url"),
-                    "description": node.get("description"),
-                    "last_push": node.get("pushedAt"),
-                    "default_branch": (
-                        (node.get("defaultBranchRef") or {}).get("name")
-                    ),
-                    "topics": [
-                        n["topic"]["name"]
-                        for n in (
-                            node.get("repositoryTopics", {}).get("nodes") or []
-                        )
-                    ],
-                    "manifest_path": manifest_path,
-                    "manifest_size_bytes": manifest_size,
-                }
-            )
-        if not page["pageInfo"]["hasNextPage"]:
-            break
-        cursor = page["pageInfo"]["endCursor"]
-
+    nodes = await discover_datapackage_repos(
+        ctx, include_archived=include_archived
+    )
+    enriched = [
+        {
+            "name": node["nameWithOwner"],
+            "private": node.get("isPrivate"),
+            "archived": node.get("isArchived"),
+            "url": node.get("url"),
+            "description": node.get("description"),
+            "last_push": node.get("pushedAt"),
+            "default_branch": (
+                (node.get("defaultBranchRef") or {}).get("name")
+            ),
+            "topics": [
+                n["topic"]["name"]
+                for n in (
+                    node.get("repositoryTopics", {}).get("nodes") or []
+                )
+            ],
+            "manifest_path": node["manifest_path"],
+            "manifest_size_bytes": node["manifest_size"],
+        }
+        for node in nodes
+    ]
     enriched.sort(key=lambda x: x.get("last_push") or "", reverse=True)
     return {
         "criterion": (
             "datapackage.json / datapackage.yaml / datapackage.yml at "
             "repo root (Frictionless Data spec; JSON preferred)"
         ),
-        "source": "GraphQL repository.object(HEAD:datapackage.*) — exhaustive",
+        "source": (
+            "GraphQL discovery (JSON in main query, YAML/.yml in batched "
+            "follow-up) — exhaustive"
+        ),
         "org": ctx.org,
         "total": len(enriched),
         "public": sum(1 for r in enriched if r.get("private") is False),
