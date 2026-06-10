@@ -44,12 +44,13 @@ def _build_yaml_check_query(repo_names: list[str]) -> str:
 
 
 async def _fetch_yaml_manifests(
-    ctx: ToolContext, repo_names: list[str], chunk_size: int = 40
+    ctx: ToolContext, repo_names: list[str], chunk_size: int = 20
 ) -> dict[str, tuple[dict[str, Any] | None, dict[str, Any] | None]]:
     """Batched yaml/yml existence check. Returns {name: (yaml_obj, yml_obj)}.
     yaml_obj/yml_obj are GraphQL Blob dicts ({"byteSize": int}) or None when
-    absent. Chunked to keep each request well under GitHub's GraphQL cost
-    threshold (chunks of ~40 repos with 2 object lookups each = 80 per query).
+    absent. Small chunks (20 repos with 2 object lookups each = 40 per query)
+    to stay well under GitHub's GraphQL cost threshold — generous margin
+    because per-token abuse-protection cooldowns are unforgiving.
     """
     result: dict[str, tuple[dict[str, Any] | None, dict[str, Any] | None]] = {}
     for i in range(0, len(repo_names), chunk_size):

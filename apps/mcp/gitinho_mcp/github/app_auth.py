@@ -33,6 +33,13 @@ class GitHubAppAuth:
         self._settings = settings
         self._token: InstallationToken | None = None
 
+    def evict_cached_token(self) -> None:
+        """Drop the cached installation token, forcing the next
+        `installation_token()` call to mint a fresh one. Use on 401 to
+        recover from GitHub abuse-protection cooldowns that mark a
+        specific token as rejected for a short window."""
+        self._token = None
+
     def _build_jwt(self) -> str:
         now = int(time.time())
         payload = {

@@ -102,6 +102,7 @@ class GitHubClient:
     ) -> Any:
         url = f"{self.api_base}{path}" if path.startswith("/") else path
         saw_5xx = False
+        retried_fresh_token = False
         for attempt in range(4):
             headers = await self._headers()
             resp = await self._http.request(
@@ -113,6 +114,14 @@ class GitHubClient:
             if resp.status_code >= 500 and attempt < 3:
                 saw_5xx = True
                 await asyncio.sleep(2**attempt)
+                continue
+            if resp.status_code == 401 and not retried_fresh_token:
+                # GitHub abuse-protection sometimes blacklists a specific
+                # installation token after a 5xx storm — minting a fresh
+                # token usually clears it.
+                self._auth.evict_cached_token()
+                retried_fresh_token = True
+                await asyncio.sleep(2)
                 continue
             if resp.status_code == 401:
                 raise GitHubAuthRejected.for_endpoint(
@@ -194,6 +203,7 @@ class GitHubClient:
         self, query: str, variables: dict[str, Any] | None = None
     ) -> dict:
         saw_5xx = False
+        retried_fresh_token = False
         for attempt in range(4):
             headers = await self._headers()
             resp = await self._http.post(
@@ -204,6 +214,14 @@ class GitHubClient:
             if resp.status_code >= 500 and attempt < 3:
                 saw_5xx = True
                 await asyncio.sleep(2**attempt)
+                continue
+            if resp.status_code == 401 and not retried_fresh_token:
+                # GitHub abuse-protection sometimes blacklists a specific
+                # installation token after a 5xx storm — minting a fresh
+                # token usually clears it.
+                self._auth.evict_cached_token()
+                retried_fresh_token = True
+                await asyncio.sleep(2)
                 continue
             if resp.status_code == 401:
                 raise GitHubAuthRejected.for_endpoint("GraphQL", saw_5xx)
