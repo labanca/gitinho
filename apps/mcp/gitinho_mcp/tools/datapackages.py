@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 import yaml
@@ -23,35 +22,6 @@ from gitinho_mcp.tools.repos import (
     _decode_content_payload,
     discover_datapackage_repos,
 )
-
-
-def _build_resource_url(
-    repo_url: str, default_branch: str | None, path: Any
-) -> str | None:
-    """Construct a clickable URL for a Frictionless resource path.
-
-    - Absolute URL → returned as-is.
-    - Relative string → built from repo_url + branch + path.
-    - List of paths (multi-file resource) → None (no single URL).
-    - Anything else → None.
-    """
-    if isinstance(path, list) or path is None:
-        return None
-    if not isinstance(path, str):
-        return None
-    if path.startswith(("http://", "https://")):
-        return path
-    branch = default_branch or "main"
-    encoded = quote(path.lstrip("/"), safe="/")
-    return f"{repo_url}/blob/{branch}/{encoded}"
-
-
-def _file_count(path: Any) -> int | None:
-    if isinstance(path, list):
-        return len(path)
-    if isinstance(path, str):
-        return 1
-    return None
 
 
 def _parse_manifest(text: str, manifest_path: str) -> dict[str, Any]:
@@ -99,28 +69,18 @@ async def _fetch_manifest(
         return repo_short, manifest, None
 
 
-def _resource_row(
-    repo_full: str,
-    repo_url: str,
-    default_branch: str | None,
-    repo_last_push: str | None,
-    resource: Any,
-) -> dict[str, Any]:
+def _resource_row(repo_full: str, repo_url: str, resource: Any) -> dict[str, Any]:
     if not isinstance(resource, dict):
         return {
             "repo": repo_full,
             "repo_url": repo_url,
             "resource_name": None,
-            "type": None,
             "format": None,
             "path": None,
-            "resource_url": None,
-            "file_count": None,
             "schema_fields_count": None,
             "mediatype": None,
             "encoding": None,
             "bytes": None,
-            "repo_last_push": repo_last_push,
             "_raw_preview": str(resource)[:200],
         }
     schema = resource.get("schema")
@@ -129,21 +89,16 @@ def _resource_row(
         fields = schema.get("fields")
         if isinstance(fields, list):
             fields_count = len(fields)
-    path = resource.get("path")
     return {
         "repo": repo_full,
         "repo_url": repo_url,
         "resource_name": resource.get("name"),
-        "type": resource.get("type"),
         "format": resource.get("format"),
-        "path": path,
-        "resource_url": _build_resource_url(repo_url, default_branch, path),
-        "file_count": _file_count(path),
+        "path": resource.get("path"),
         "schema_fields_count": fields_count,
         "mediatype": resource.get("mediatype"),
         "encoding": resource.get("encoding"),
         "bytes": resource.get("bytes"),
-        "repo_last_push": repo_last_push,
     }
 
 
@@ -166,74 +121,46 @@ async def list_datapackage_resources(
 
     Pass `repo` (name only, no owner) to scope to a single repository.
 
-    Each row carries: repo, repo_url, resource_name, type, format, path,
-    resource_url (clickable link to the file on GitHub — null when the
-    resource has multiple files), file_count, schema_fields_count,
-    mediatype, encoding, bytes, repo_last_push (ISO date of last push).
-
     Returns `{criterion, org, total_repos, total_resources, rows, errors}`.
     `errors` lists repos whose manifest was unreadable or malformed —
     surface them to the user, don't silently skip.
-
-    Pass the `rows` verbatim to `createTable` — do NOT use Python/JS
-    execution to reshape or filter, and NEVER aggregate rows into a
-    "(+ N more)" placeholder. Each resource is one row.
     """
     ctx = await get_context()
 
     nodes = await discover_datapackage_repos(
         ctx, include_archived=include_archived, repo_filter=repo
     )
-    candidates = [
-        {
-            "full_name": n["nameWithOwner"],
-            "url": n["url"],
-            "manifest_path": n["manifest_path"],
-            "default_branch": (n.get("defaultBranchRef") or {}).get("name"),
-            "pushed_at": n.get("pushedAt"),
-        }
-        for n in nodes
+    candidates: list[tuple[str, str, str]] = [
+        (n["nameWithOwner"], n["url"], n["manifest_path"]) for n in nodes
     ]
 
     sem = asyncio.Semaphore(10)
     results = await asyncio.gather(
         *[
             _fetch_manifest(
-                ctx,
-                c["full_name"].split("/", 1)[-1],
-                c["manifest_path"],
-                sem,
+                ctx, full_name.split("/", 1)[-1], manifest_path, sem
             )
-            for c in candidates
+            for full_name, _, manifest_path in candidates
         ]
     )
 
-    by_short = {c["full_name"].split("/", 1)[-1]: c for c in candidates}
+    by_short = {
+        full_name.split("/", 1)[-1]: (full_name, url, manifest_path)
+        for full_name, url, manifest_path in candidates
+    }
     rows: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for repo_short, manifest, err in results:
-        c = by_short[repo_short]
+        full_name, repo_url, _ = by_short[repo_short]
         if err is not None or manifest is None:
-            errors.append(
-                {"repo": c["full_name"], "reason": err or "no manifest"}
-            )
+            errors.append({"repo": full_name, "reason": err or "no manifest"})
             continue
         resources = manifest.get("resources")
         if not isinstance(resources, list):
-            errors.append(
-                {"repo": c["full_name"], "reason": "no `resources` list"}
-            )
+            errors.append({"repo": full_name, "reason": "no `resources` list"})
             continue
         for r in resources:
-            rows.append(
-                _resource_row(
-                    c["full_name"],
-                    c["url"],
-                    c["default_branch"],
-                    c["pushed_at"],
-                    r,
-                )
-            )
+            rows.append(_resource_row(full_name, repo_url, r))
 
     rows.sort(
         key=lambda x: (x.get("repo") or "", x.get("resource_name") or "")
