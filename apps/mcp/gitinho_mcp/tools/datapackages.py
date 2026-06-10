@@ -14,21 +14,46 @@ import json
 from typing import Any
 
 import httpx
+import yaml
 
 from gitinho_mcp.github.graphql import ORG_REPOS_WITH_DATAPACKAGE
 from gitinho_mcp.server import mcp
 from gitinho_mcp.tools._context import ToolContext, get_context
-from gitinho_mcp.tools.repos import _decode_content_payload
+from gitinho_mcp.tools.repos import (
+    _decode_content_payload,
+    detect_datapackage_manifest,
+)
+
+
+def _parse_manifest(text: str, manifest_path: str) -> dict[str, Any]:
+    """Parse manifest text as JSON or YAML based on filename. Returns parsed
+    dict on success, or raises ValueError with a human-readable reason."""
+    if manifest_path.endswith(".json"):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON: {exc}") from exc
+    else:
+        try:
+            parsed = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"invalid YAML: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("manifest is not a mapping/object")
+    return parsed
 
 
 async def _fetch_manifest(
-    ctx: ToolContext, repo_short: str, sem: asyncio.Semaphore
+    ctx: ToolContext,
+    repo_short: str,
+    manifest_path: str,
+    sem: asyncio.Semaphore,
 ) -> tuple[str, dict[str, Any] | None, str | None]:
     """Return (repo_short, parsed_manifest, error_message)."""
     async with sem:
         try:
             data = await ctx.gh.get(
-                f"/repos/{ctx.org}/{repo_short}/contents/datapackage.json",
+                f"/repos/{ctx.org}/{repo_short}/contents/{manifest_path}",
                 owner=ctx.org,
             )
         except httpx.HTTPStatusError as exc:
@@ -39,11 +64,9 @@ async def _fetch_manifest(
         if not decoded.get("ok"):
             return repo_short, None, str(decoded.get("error") or "decode failed")
         try:
-            manifest = json.loads(decoded["content"])
-        except json.JSONDecodeError as exc:
-            return repo_short, None, f"invalid JSON: {exc}"
-        if not isinstance(manifest, dict):
-            return repo_short, None, "manifest is not a JSON object"
+            manifest = _parse_manifest(decoded["content"], manifest_path)
+        except ValueError as exc:
+            return repo_short, None, str(exc)
         return repo_short, manifest, None
 
 
@@ -105,7 +128,7 @@ async def list_datapackage_resources(
     """
     ctx = await get_context()
 
-    candidates: list[tuple[str, str]] = []
+    candidates: list[tuple[str, str, str]] = []  # (full_name, url, manifest_path)
     cursor: str | None = None
     while True:
         data = await ctx.gh.graphql(
@@ -113,13 +136,14 @@ async def list_datapackage_resources(
         )
         page = data["organization"]["repositories"]
         for node in page["nodes"]:
-            if node.get("datapackage") is None:
+            manifest_path, _ = detect_datapackage_manifest(node)
+            if manifest_path is None:
                 continue
             if repo is not None and node["name"] != repo:
                 continue
             if not include_archived and node.get("isArchived"):
                 continue
-            candidates.append((node["nameWithOwner"], node["url"]))
+            candidates.append((node["nameWithOwner"], node["url"], manifest_path))
         if not page["pageInfo"]["hasNextPage"]:
             break
         cursor = page["pageInfo"]["endCursor"]
@@ -127,19 +151,21 @@ async def list_datapackage_resources(
     sem = asyncio.Semaphore(10)
     results = await asyncio.gather(
         *[
-            _fetch_manifest(ctx, full_name.split("/", 1)[-1], sem)
-            for full_name, _ in candidates
+            _fetch_manifest(
+                ctx, full_name.split("/", 1)[-1], manifest_path, sem
+            )
+            for full_name, _, manifest_path in candidates
         ]
     )
 
     by_short = {
-        full_name.split("/", 1)[-1]: (full_name, url)
-        for full_name, url in candidates
+        full_name.split("/", 1)[-1]: (full_name, url, manifest_path)
+        for full_name, url, manifest_path in candidates
     }
     rows: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for repo_short, manifest, err in results:
-        full_name, repo_url = by_short[repo_short]
+        full_name, repo_url, _ = by_short[repo_short]
         if err is not None or manifest is None:
             errors.append({"repo": full_name, "reason": err or "no manifest"})
             continue
@@ -154,8 +180,11 @@ async def list_datapackage_resources(
         key=lambda x: (x.get("repo") or "", x.get("resource_name") or "")
     )
     return {
-        "criterion": "Frictionless resources[] in datapackage.json at repo root",
-        "source": "GraphQL discovery + REST /contents/datapackage.json per repo",
+        "criterion": (
+            "Frictionless resources[] in datapackage.json/.yaml/.yml at "
+            "repo root (JSON preferred)"
+        ),
+        "source": "GraphQL discovery + REST /contents/<manifest> per repo",
         "org": ctx.org,
         "total_repos": len(candidates),
         "total_resources": len(rows),

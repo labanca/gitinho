@@ -21,6 +21,29 @@ from gitinho_mcp.tools._context import ToolContext, get_context
 # would dominate the context window and rarely help answer the question.
 MAX_FILE_BYTES = 512 * 1024
 
+# Manifest filename preference order — JSON is the canonical Frictionless
+# format, but older repos in the org adopted YAML. Order matters: if a repo
+# has more than one, the first hit wins.
+DATAPACKAGE_MANIFEST_ALIASES: tuple[tuple[str, str], ...] = (
+    ("datapackageJson", "datapackage.json"),
+    ("datapackageYaml", "datapackage.yaml"),
+    ("datapackageYml", "datapackage.yml"),
+)
+
+
+def detect_datapackage_manifest(
+    node: dict[str, Any],
+) -> tuple[str | None, int | None]:
+    """Return (filename, byte_size) for the manifest present on a repo node
+    from ORG_REPOS_WITH_DATAPACKAGE, or (None, None) if none exists. Prefers
+    JSON over YAML when more than one is present.
+    """
+    for alias, filename in DATAPACKAGE_MANIFEST_ALIASES:
+        obj = node.get(alias)
+        if obj is not None:
+            return filename, obj.get("byteSize")
+    return None, None
+
 
 class RepoSummary(BaseModel):
     name: str
@@ -209,19 +232,22 @@ async def datapackages_stats(topic: str = "datapackage") -> dict[str, Any]:
 async def find_datapackages(include_archived: bool = False) -> dict[str, Any]:
     """Find Frictionless Data datapackages in the organization (CANONICAL).
 
-    Identifies datapackages by the canonical criterion: presence of the
-    file `datapackage.json` at the repository root (per the Frictionless
-    Data specification, https://frictionlessdata.io).
+    Identifies datapackages by the canonical criterion: presence of a
+    Frictionless manifest at the repository root — `datapackage.json`
+    (preferred), or `datapackage.yaml` / `datapackage.yml` (used by older
+    repos in the org). When more than one is present, JSON wins.
 
-    Uses GraphQL `repository.object(expression: "HEAD:datapackage.json")`
-    to check existence on every org repo in one paginated query — does
-    NOT use `/search/code`, which is index-based, misses recently created
-    private repos, and silently omits results. The result is exhaustive
-    and deterministic.
+    Uses a single GraphQL query with `repository.object(expression:)` for
+    all three filenames, on every org repo in one paginated request —
+    does NOT use `/search/code`, which is index-based, misses recently
+    created private repos, and silently omits results. The result is
+    exhaustive and deterministic.
 
     Use this tool for ANY question about datapackages / frictionless /
     "data packages" of the organization, unless the user explicitly asks
     to filter by GitHub topic (in which case use `datapackages_stats`).
+    Each entry carries `manifest_path` ("datapackage.json"/".yaml"/".yml")
+    so downstream tools know which file to fetch.
     """
     ctx = await get_context()
     enriched: list[dict[str, Any]] = []
@@ -232,7 +258,8 @@ async def find_datapackages(include_archived: bool = False) -> dict[str, Any]:
         )
         page = data["organization"]["repositories"]
         for node in page["nodes"]:
-            if node.get("datapackage") is None:
+            manifest_path, manifest_size = detect_datapackage_manifest(node)
+            if manifest_path is None:
                 continue
             if not include_archived and node.get("isArchived"):
                 continue
@@ -253,9 +280,8 @@ async def find_datapackages(include_archived: bool = False) -> dict[str, Any]:
                             node.get("repositoryTopics", {}).get("nodes") or []
                         )
                     ],
-                    "datapackage_size_bytes": (node["datapackage"] or {}).get(
-                        "byteSize"
-                    ),
+                    "manifest_path": manifest_path,
+                    "manifest_size_bytes": manifest_size,
                 }
             )
         if not page["pageInfo"]["hasNextPage"]:
@@ -264,8 +290,11 @@ async def find_datapackages(include_archived: bool = False) -> dict[str, Any]:
 
     enriched.sort(key=lambda x: x.get("last_push") or "", reverse=True)
     return {
-        "criterion": "datapackage.json at repo root (Frictionless Data spec)",
-        "source": "GraphQL repository.object(HEAD:datapackage.json) — exhaustive",
+        "criterion": (
+            "datapackage.json / datapackage.yaml / datapackage.yml at "
+            "repo root (Frictionless Data spec; JSON preferred)"
+        ),
+        "source": "GraphQL repository.object(HEAD:datapackage.*) — exhaustive",
         "org": ctx.org,
         "total": len(enriched),
         "public": sum(1 for r in enriched if r.get("private") is False),
