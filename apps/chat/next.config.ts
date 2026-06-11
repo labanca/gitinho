@@ -11,9 +11,17 @@ const noHttps = process.env.NO_HTTPS === "1";
 const csp = [
   "default-src 'self'",
   // Next.js precisa de inline + eval p/ dev; em prod restringimos.
+  // `wasm-unsafe-eval` é obrigatório pro Shiki rodar — ele compila o
+  // engine Oniguruma (regex) via WebAssembly em todo code block. Sem
+  // essa directive o Chrome bloqueia `WebAssembly.compile()` em silêncio
+  // (a promise rejeita sem CSP violation visível no console), Shiki cai
+  // no .ifFail() do PreBlock, e os blocos viram texto plain (sem syntax
+  // color). `wasm-unsafe-eval` libera SÓ wasm — não habilita eval() de
+  // string nem Function(), então o hardening efetivo continua quase o
+  // mesmo. Mesma decisão da runnerCsp abaixo.
   isProd
-    ? "script-src 'self' 'unsafe-inline'"
-    : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    ? "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'"
+    : "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://avatars.githubusercontent.com",
   "font-src 'self' data:",
