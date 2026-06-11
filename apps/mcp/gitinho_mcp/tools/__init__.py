@@ -2,6 +2,7 @@
 
 from gitinho_mcp.tools import (  # noqa: F401
     activity,
+    code_search,
     comments,
     commits,
     datapackages,

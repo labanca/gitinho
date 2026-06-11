@@ -177,4 +177,26 @@ async def list_datapackage_resources(
         "include_archived": include_archived,
         "rows": rows,
         "errors": errors,
+        # Chat UI render hint: the response was big enough that piping
+        # `rows` through createTable would stall LLM output. Instead the
+        # UI sees this hint and renders the interactive table directly
+        # from `rows`. The agent should NOT call createTable on top of
+        # this — see prompts.ts and gitinho-agents.ts.
+        "_chat_table": {
+            "title": f"Recursos de datapackages em {ctx.org}",
+            "description": (
+                f"{len(rows)} recursos em {len(candidates)} repositórios"
+                + (f" — {len(errors)} repo(s) com erro" if errors else "")
+            ),
+            "data_field": "rows",
+            "columns": [
+                {"key": "repo", "label": "Repositório", "type": "string"},
+                {"key": "resource_name", "label": "Recurso", "type": "string"},
+                {"key": "format", "label": "Formato", "type": "string"},
+                {"key": "path", "label": "Caminho", "type": "string"},
+                {"key": "schema_fields_count", "label": "# campos", "type": "number"},
+                {"key": "mediatype", "label": "Mediatype", "type": "string"},
+                {"key": "bytes", "label": "Bytes", "type": "number"},
+            ],
+        },
     }

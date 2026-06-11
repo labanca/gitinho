@@ -252,6 +252,23 @@ async def list_org_repos(
         "org": ctx.org,
         "total": len(repos),
         "repos": [r.model_dump() for r in repos],
+        "_chat_table": {
+            "title": f"Repositórios de {ctx.org}",
+            "description": f"{len(repos)} repositórios",
+            "data_field": "repos",
+            "columns": [
+                {"key": "name_with_owner", "label": "Repositório", "type": "string"},
+                {"key": "primary_language", "label": "Linguagem", "type": "string"},
+                {"key": "is_private", "label": "Privado", "type": "boolean"},
+                {"key": "is_archived", "label": "Arquivado", "type": "boolean"},
+                {"key": "stargazers", "label": "Stars", "type": "number"},
+                {"key": "open_issues", "label": "Issues abertas", "type": "number"},
+                {"key": "open_prs", "label": "PRs abertos", "type": "number"},
+                {"key": "branch_count", "label": "Branches", "type": "number"},
+                {"key": "pushed_at", "label": "Último push", "type": "date"},
+                {"key": "url", "label": "URL", "type": "string"},
+            ],
+        },
     }
 
 
@@ -274,7 +291,20 @@ async def repos_without_updates(days: int = 180) -> dict[str, Any]:
         if pushed_dt < cutoff:
             stale.append({"name": r.name_with_owner, "last_push": r.pushed_at})
     stale.sort(key=lambda x: x["last_push"])
-    return {"days": days, "count": len(stale), "repos": stale}
+    return {
+        "days": days,
+        "count": len(stale),
+        "repos": stale,
+        "_chat_table": {
+            "title": f"Repos sem push há {days}+ dias",
+            "description": f"{len(stale)} repositórios",
+            "data_field": "repos",
+            "columns": [
+                {"key": "name", "label": "Repositório", "type": "string"},
+                {"key": "last_push", "label": "Último push", "type": "date"},
+            ],
+        },
+    }
 
 
 @mcp.tool()
@@ -288,7 +318,19 @@ async def repos_with_multiple_branches() -> dict[str, Any]:
         if r.branch_count > 1
     ]
     multi.sort(key=lambda x: -x["branches"])
-    return {"count": len(multi), "repos": multi}
+    return {
+        "count": len(multi),
+        "repos": multi,
+        "_chat_table": {
+            "title": "Repos com mais de 1 branch",
+            "description": f"{len(multi)} repositórios",
+            "data_field": "repos",
+            "columns": [
+                {"key": "name", "label": "Repositório", "type": "string"},
+                {"key": "branches", "label": "Branches", "type": "number"},
+            ],
+        },
+    }
 
 
 @mcp.tool()
@@ -319,6 +361,17 @@ async def datapackages_stats(topic: str = "datapackage") -> dict[str, Any]:
             }
             for r in matches
         ],
+        "_chat_table": {
+            "title": f"Repos com topic '{topic}'",
+            "description": f"{len(matches)} repositórios",
+            "data_field": "repos",
+            "columns": [
+                {"key": "name", "label": "Repositório", "type": "string"},
+                {"key": "private", "label": "Privado", "type": "boolean"},
+                {"key": "updated_at", "label": "Atualizado em", "type": "date"},
+                {"key": "url", "label": "URL", "type": "string"},
+            ],
+        },
     }
 
 
@@ -385,6 +438,20 @@ async def find_datapackages(include_archived: bool = False) -> dict[str, Any]:
         "private": sum(1 for r in enriched if r.get("private") is True),
         "include_archived": include_archived,
         "repos": enriched,
+        "_chat_table": {
+            "title": f"Datapackages em {ctx.org}",
+            "description": f"{len(enriched)} repositórios com manifesto Frictionless",
+            "data_field": "repos",
+            "columns": [
+                {"key": "name", "label": "Repositório", "type": "string"},
+                {"key": "private", "label": "Privado", "type": "boolean"},
+                {"key": "archived", "label": "Arquivado", "type": "boolean"},
+                {"key": "default_branch", "label": "Branch default", "type": "string"},
+                {"key": "last_push", "label": "Último push", "type": "date"},
+                {"key": "manifest_path", "label": "Manifesto", "type": "string"},
+                {"key": "url", "label": "URL", "type": "string"},
+            ],
+        },
     }
 
 

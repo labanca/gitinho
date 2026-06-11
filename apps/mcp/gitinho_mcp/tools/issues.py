@@ -84,18 +84,32 @@ async def search_issues(query: str, limit: int = 30) -> dict[str, Any]:
     )
     items = (res or {}).get("items", []) if isinstance(res, dict) else []
     total = (res or {}).get("total_count", 0) if isinstance(res, dict) else 0
+    rows = [
+        {
+            "title": i["title"],
+            "url": i["html_url"],
+            "state": i["state"],
+            "created_at": i["created_at"],
+            "user": i["user"]["login"],
+            "repo": i["repository_url"].split("/repos/")[-1],
+        }
+        for i in items
+    ]
     return {
         "query": safe,
         "total": total,
-        "items": [
-            {
-                "title": i["title"],
-                "url": i["html_url"],
-                "state": i["state"],
-                "created_at": i["created_at"],
-                "user": i["user"]["login"],
-                "repo": i["repository_url"].split("/repos/")[-1],
-            }
-            for i in items
-        ],
+        "items": rows,
+        "_chat_table": {
+            "title": f"Issues: {query}",
+            "description": f"{len(rows)} resultados (total real: {total})",
+            "data_field": "items",
+            "columns": [
+                {"key": "title", "label": "Título", "type": "string"},
+                {"key": "repo", "label": "Repositório", "type": "string"},
+                {"key": "user", "label": "Autor", "type": "string"},
+                {"key": "state", "label": "Estado", "type": "string"},
+                {"key": "created_at", "label": "Criado em", "type": "date"},
+                {"key": "url", "label": "URL", "type": "string"},
+            ],
+        },
     }

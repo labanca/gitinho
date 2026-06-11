@@ -73,7 +73,20 @@ async def count_open_prs(repo: str | None = None) -> dict[str, Any]:
             break
         cursor = page["pageInfo"]["endCursor"]
     per_repo.sort(key=lambda x: -x["open_prs"])
-    return {"org": ctx.org, "total_open_prs": total, "per_repo": per_repo}
+    return {
+        "org": ctx.org,
+        "total_open_prs": total,
+        "per_repo": per_repo,
+        "_chat_table": {
+            "title": f"PRs abertos por repositório — {ctx.org}",
+            "description": f"{total} PRs abertos em {len(per_repo)} repos",
+            "data_field": "per_repo",
+            "columns": [
+                {"key": "repo", "label": "Repositório", "type": "string"},
+                {"key": "open_prs", "label": "PRs abertos", "type": "number"},
+            ],
+        },
+    }
 
 
 @mcp.tool()
@@ -131,6 +144,25 @@ async def list_prs_by_user(
         "until": until,
         "total": len(rows),
         "prs": rows,
+        "_chat_table": {
+            "title": f"PRs de @{login} em {ctx.org}",
+            "description": (
+                f"{len(rows)} PRs — estado: {state}"
+                + (f" — desde {since}" if since else "")
+                + (f" — até {until}" if until else "")
+            ),
+            "data_field": "prs",
+            "columns": [
+                {"key": "title", "label": "Título", "type": "string"},
+                {"key": "repo", "label": "Repositório", "type": "string"},
+                {"key": "number", "label": "#", "type": "number"},
+                {"key": "state", "label": "Estado", "type": "string"},
+                {"key": "merged", "label": "Merged", "type": "boolean"},
+                {"key": "created_at", "label": "Criado em", "type": "date"},
+                {"key": "closed_at", "label": "Fechado em", "type": "date"},
+                {"key": "url", "label": "URL", "type": "string"},
+            ],
+        },
     }
 
 

@@ -122,6 +122,23 @@ async def list_issue_comments_by_user(
         "total": len(comments),
         "source_query": q,
         "comments": comments,
+        "_chat_table": {
+            "title": f"Comentários em issues por @{login}",
+            "description": (
+                f"{len(comments)} comentários"
+                + (f" — desde {since}" if since else "")
+                + (f" — até {until}" if until else "")
+            ),
+            "data_field": "comments",
+            "columns": [
+                {"key": "repo", "label": "Repositório", "type": "string"},
+                {"key": "parent_number", "label": "Issue #", "type": "number"},
+                {"key": "parent_title", "label": "Título do issue", "type": "string"},
+                {"key": "created_at", "label": "Criado em", "type": "date"},
+                {"key": "body_preview", "label": "Trecho", "type": "string"},
+                {"key": "url", "label": "URL", "type": "string"},
+            ],
+        },
     }
 
 
@@ -150,4 +167,21 @@ async def list_pr_comments_by_user(
         "total": len(comments),
         "source_query": q,
         "comments": comments,
+        "_chat_table": {
+            "title": f"Comentários em PRs por @{login}",
+            "description": (
+                f"{len(comments)} comentários"
+                + (f" — desde {since}" if since else "")
+                + (f" — até {until}" if until else "")
+            ),
+            "data_field": "comments",
+            "columns": [
+                {"key": "repo", "label": "Repositório", "type": "string"},
+                {"key": "parent_number", "label": "PR #", "type": "number"},
+                {"key": "parent_title", "label": "Título do PR", "type": "string"},
+                {"key": "created_at", "label": "Criado em", "type": "date"},
+                {"key": "body_preview", "label": "Trecho", "type": "string"},
+                {"key": "url", "label": "URL", "type": "string"},
+            ],
+        },
     }

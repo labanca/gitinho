@@ -25,7 +25,21 @@ async def list_org_members() -> dict[str, Any]:
         if not page["pageInfo"]["hasNextPage"]:
             break
         cursor = page["pageInfo"]["endCursor"]
-    return {"org": ctx.org, "total": len(out), "members": out}
+    return {
+        "org": ctx.org,
+        "total": len(out),
+        "members": out,
+        "_chat_table": {
+            "title": f"Membros da organização {ctx.org}",
+            "description": f"{len(out)} membros",
+            "data_field": "members",
+            "columns": [
+                {"key": "login", "label": "Login", "type": "string"},
+                {"key": "name", "label": "Nome", "type": "string"},
+                {"key": "avatar_url", "label": "Avatar", "type": "string"},
+            ],
+        },
+    }
 
 
 @mcp.tool()

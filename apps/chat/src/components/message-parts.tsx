@@ -868,6 +868,42 @@ export const ToolMessagePart = memo(
       [result],
     );
 
+    // MCP tools can opt into in-place interactive table rendering by
+    // emitting a `_chat_table` hint alongside their data. The hint is
+    // tiny (title, columns, data_field) — the actual rows stay where
+    // they already live (typically `rows`) so we don't double the
+    // payload. This bypasses the LLM having to call createTable on top
+    // of an already-fetched dataset, which would force it to re-emit
+    // every row as a tool argument (sequential token generation, very
+    // slow for >50 rows). The agent is instructed in prompts.ts to NOT
+    // re-render once it sees this field.
+    const chatTable = useMemo(() => {
+      const r = result as any;
+      if (!r || typeof r !== "object") return null;
+      const content = Array.isArray(r.content) ? r.content : null;
+      if (!content) return null;
+      for (const node of content) {
+        const text = node?.text;
+        if (!text || typeof text !== "object") continue;
+        const hint = text._chat_table;
+        if (!hint || typeof hint !== "object") continue;
+        const dataField =
+          typeof hint.data_field === "string" ? hint.data_field : "rows";
+        const data = text[dataField];
+        if (!Array.isArray(data)) continue;
+        const columns = Array.isArray(hint.columns) ? hint.columns : null;
+        if (!columns) continue;
+        return {
+          title: typeof hint.title === "string" ? hint.title : "Resultado",
+          description:
+            typeof hint.description === "string" ? hint.description : undefined,
+          columns,
+          data,
+        };
+      }
+      return null;
+    }, [result]);
+
     const CustomToolComponent = useMemo(() => {
       if (
         toolName === DefaultToolName.WebSearch ||
@@ -1042,6 +1078,14 @@ export const ToolMessagePart = memo(
                     </div>
                   )}
                 </div>
+                {chatTable && (
+                  <InteractiveTable
+                    title={chatTable.title}
+                    description={chatTable.description}
+                    columns={chatTable.columns}
+                    data={chatTable.data}
+                  />
+                )}
                 {!result ? null : isWorkflowTool ? (
                   <WorkflowInvocation
                     result={result as VercelAIWorkflowToolStreamingResult}

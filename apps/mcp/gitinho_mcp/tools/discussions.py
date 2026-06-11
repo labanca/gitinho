@@ -41,4 +41,17 @@ async def discussions_overview() -> dict[str, Any]:
             break
         cursor = page["pageInfo"]["endCursor"]
     out.sort(key=lambda x: -x["total"])
-    return {"org": ctx.org, "total_discussions": grand, "per_repo": out}
+    return {
+        "org": ctx.org,
+        "total_discussions": grand,
+        "per_repo": out,
+        "_chat_table": {
+            "title": f"Discussões por repositório — {ctx.org}",
+            "description": f"{grand} discussões em {len(out)} repositórios",
+            "data_field": "per_repo",
+            "columns": [
+                {"key": "repo", "label": "Repositório", "type": "string"},
+                {"key": "total", "label": "Total", "type": "number"},
+            ],
+        },
+    }

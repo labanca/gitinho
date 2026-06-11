@@ -165,4 +165,17 @@ async def org_users_activity_report(
         "until": suntil,
         "members_total": len(rows),
         "rows": rows,
+        "_chat_table": {
+            "title": f"Atividade dos membros — {ctx.org}",
+            "description": f"{len(rows)} membros — janela {sfrom[:10]} a {suntil[:10]}",
+            "data_field": "rows",
+            "columns": [
+                {"key": "login", "label": "Login", "type": "string"},
+                {"key": "name", "label": "Nome", "type": "string"},
+                {"key": "commits", "label": "Commits", "type": "number"},
+                {"key": "issues_created", "label": "Issues", "type": "number"},
+                {"key": "prs_created", "label": "PRs", "type": "number"},
+                {"key": "pr_reviews", "label": "Reviews", "type": "number"},
+            ],
+        },
     }
