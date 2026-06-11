@@ -121,11 +121,14 @@ export function PreBlock({ children }: { children: any }) {
   const { theme } = useTheme();
   const language = children.props.className?.split("-")?.[1] || "bash";
   const [loading, setLoading] = useState(true);
-  const [component, setComponent] = useState<JSX.Element | null>(
-    <PurePre className="animate-pulse" code={code} lang={language}>
-      {children}
-    </PurePre>,
-  );
+  // Shiki may fail on the first render (streaming hasn't produced the full
+  // code body yet) or on inputs it dislikes (e.g. URLs with `&` under
+  // `bash`). Keep `highlighted` null when that happens so the unstyled
+  // fallback below — re-evaluated every render — stays in sync with the
+  // current `children`. The previous code seeded `useState` with a JSX
+  // that captured an empty `children` from the first render, so once
+  // Shiki errored silently the block stayed visually empty forever.
+  const [highlighted, setHighlighted] = useState<JSX.Element | null>(null);
 
   useLayoutEffect(() => {
     safe()
@@ -136,7 +139,8 @@ export function PreBlock({ children }: { children: any }) {
           theme == "dark" ? "dark-plus" : "github-light",
         ),
       )
-      .ifOk(setComponent)
+      .ifOk(setHighlighted)
+      .ifFail(() => setHighlighted(null))
       .watch(() => setLoading(false));
   }, [theme, language, code]);
 
@@ -148,7 +152,11 @@ export function PreBlock({ children }: { children: any }) {
         "text-sm flex bg-secondary/40 shadow border flex-col rounded relative my-4 overflow-hidden",
       )}
     >
-      {component}
+      {highlighted ?? (
+        <PurePre code={code} lang={language}>
+          {children}
+        </PurePre>
+      )}
     </div>
   );
 }

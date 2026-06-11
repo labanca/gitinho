@@ -59,10 +59,21 @@ export function CodeBlock({
           },
         }) as JSX.Element;
       })
-      .ifOk(setComponent);
+      .ifOk(setComponent)
+      // Shiki errors are silent in production; without a reset we'd hold
+      // the previous render's highlighted output instead of falling back.
+      .ifFail(() => setComponent(null));
   }, [theme, lang, code]);
 
   if (!code) return fallback;
 
-  return component ?? fallback;
+  // Plain-text fallback while highlighting loads (or if Shiki errored on
+  // this input). Without this the block would render empty.
+  return (
+    component ?? (
+      <pre className={className} lang={lang}>
+        <code>{code}</code>
+      </pre>
+    )
+  );
 }
