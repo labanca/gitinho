@@ -5,20 +5,37 @@ import {
   CodeWorkerResult,
 } from "./code-runner.interface";
 import { safeJsRun } from "./safe-js-run";
-import { safePythonRun } from "./safe-python-run";
 
+// Python execution moved to `/pyodide-runner` (iframe with scoped CSP);
+// see `call-worker.ts`. This worker only handles JavaScript now.
 self.onmessage = async (event) => {
   const { code, type, timeout = 300000, id } = event.data as CodeWorkerRequest;
-  const engine = type == "javascript" ? safeJsRun : safePythonRun;
-  const result = await engine({
+  if (type !== "javascript") {
+    const errorResult: CodeRunnerResult = {
+      success: false,
+      error: `Unsupported type in JS worker: ${type}`,
+      logs: [
+        {
+          type: "error",
+          args: [
+            {
+              type: "data",
+              value: `Worker only handles javascript; got ${type}`,
+            },
+          ],
+        },
+      ],
+    };
+    const resultEvent: CodeWorkerResult = { id, type: "result", result: errorResult };
+    self.postMessage(resultEvent);
+    return;
+  }
+
+  const result = await safeJsRun({
     code,
     timeout,
     onLog(entry) {
-      const logEvent: CodeWorkerEvent = {
-        id,
-        type: "log",
-        entry,
-      };
+      const logEvent: CodeWorkerEvent = { id, type: "log", entry };
       self.postMessage(logEvent);
     },
   }).catch((error) => {
@@ -27,12 +44,7 @@ self.onmessage = async (event) => {
       logs: [
         {
           type: "error",
-          args: [
-            {
-              type: "data",
-              value: error.message,
-            },
-          ],
+          args: [{ type: "data", value: error.message }],
         },
       ],
       error: error.message,
@@ -40,10 +52,6 @@ self.onmessage = async (event) => {
     return errorResult;
   });
 
-  const resultEvent: CodeWorkerResult = {
-    id,
-    type: "result",
-    result,
-  };
+  const resultEvent: CodeWorkerResult = { id, type: "result", result };
   self.postMessage(resultEvent);
 };

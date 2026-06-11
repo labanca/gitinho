@@ -7,7 +7,7 @@ export const pythonExecutionSchema: JSONSchema7 = {
   properties: {
     code: {
       type: "string",
-      description: `Execute Python code in the user's browser via Pyodide.\n\nNetwork access: use pyodide.http.open_url for HTTP/HTTPS, not urllib/request/requests. CORS must allow the app origin.\nExample (CSV):\nfrom pyodide.http import open_url\nimport pandas as pd\nurl = 'https://example.com/data.csv'\ndf = pd.read_csv(open_url(url))\nprint(df.head())\n\nOutput capture:\npyodide.setStdout({\n  batched: (output: string) => {\n    const type = output.startsWith('data:image/png;base64') ? 'image' : 'data'\n    logs.push({ type: 'log', args: [{ type, value: output }] })\n  },\n})\npyodide.setStderr({\n  batched: (output: string) => {\n    logs.push({ type: 'error', args: [{ type: 'data', value: output }] })\n  },\n})`,
+      description: `Execute Python code in the user's browser via Pyodide. State persists between calls in the same chat session.\n\nNetwork: use pyodide.http.pyfetch and the chat's /api/gh-proxy (allowlist: /repos/<org>/... and /orgs/<org>/...). NEVER call api.github.com or raw.githubusercontent.com directly — both are blocked by CSP.\n\nExample:\nfrom pyodide.http import pyfetch\nimport json\nresp = await pyfetch("/api/gh-proxy/orgs/splor-mg/repos?per_page=100")\nrepos = json.loads(await resp.string())\n\nRendering tables: for any listing > ~50 rows, call display_table(title, columns, rows, description=None) — it prints a special marker that the UI renders as the same interactive table component as createTable (search, sort, CSV/XLSX export) without making the model re-emit each row as tool args.\n\nExample:\ndisplay_table("Repos", [{"key":"name","label":"Nome","type":"string"}], [{"name":"x"}, {"name":"y"}])`,
     },
   },
   required: ["code"],
@@ -15,6 +15,6 @@ export const pythonExecutionSchema: JSONSchema7 = {
 
 export const pythonExecutionTool = createTool({
   description:
-    "Execute Python code in the user's browser via Pyodide. Use pyodide.http.open_url for HTTP(S) downloads; CORS must allow the app origin.",
+    "Execute Python code in the user's browser via Pyodide. Use pyfetch + /api/gh-proxy for GitHub data. For listings > 50 rows, use display_table() instead of createTable to avoid generating every row as tool args.",
   inputSchema: jsonSchemaToZod(pythonExecutionSchema),
 });

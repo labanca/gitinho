@@ -23,6 +23,10 @@ import { safe } from "ts-safe";
 import { CodeBlock } from "ui/CodeBlock";
 import { Skeleton } from "ui/skeleton";
 import { TextShimmer } from "ui/text-shimmer";
+import {
+  InteractiveTable,
+  type InteractiveTableProps,
+} from "@/components/tool-invocation/interactive-table";
 
 export const CodeExecutor = memo(function CodeExecutor({
   part,
@@ -147,6 +151,20 @@ export const CodeExecutor = memo(function CodeExecutor({
               if (arg.type == "image") {
                 /* eslint-disable-next-line @next/next/no-img-element */
                 return <img key={i} src={arg.value} alt="Code output" />;
+              }
+              if (arg.type == "table") {
+                const v = arg.value as InteractiveTableProps & {
+                  description?: string | null;
+                };
+                return (
+                  <InteractiveTable
+                    key={i}
+                    title={v.title}
+                    description={v.description ?? undefined}
+                    columns={v.columns}
+                    data={v.data}
+                  />
+                );
               }
               return (
                 <span key={i}>

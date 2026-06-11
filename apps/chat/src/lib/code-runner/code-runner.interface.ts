@@ -1,6 +1,21 @@
+export type TableLogValue = {
+  title: string;
+  description?: string | null;
+  columns: {
+    key: string;
+    label: string;
+    type?: "string" | "number" | "date" | "boolean" | null;
+  }[];
+  data: Record<string, unknown>[];
+};
+
 export type LogEntry = {
   type: "log" | "error" | (string & {});
-  args: ({ type: "data"; value: any } | { type: "image"; value: string })[];
+  args: (
+    | { type: "data"; value: any }
+    | { type: "image"; value: string }
+    | { type: "table"; value: TableLogValue }
+  )[];
 };
 
 export type CodeRunnerResult = {
