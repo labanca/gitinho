@@ -34,3 +34,5 @@ Estrutura:
 |---|---|---|
 | [0001](0001-one-mcp-per-external-domain.md) | One MCP server per external domain | Accepted |
 | [0002](0002-one-proxy-route-per-external-domain.md) | One proxy route per external domain | Accepted |
+| [0003](0003-pyodide-runs-in-scoped-iframe.md) | Pyodide roda em iframe escopado, não no app principal | Accepted |
+| [0004](0004-marker-prefix-render-protocol.md) | Tool result auto-render via marker prefix protocol | Accepted |
