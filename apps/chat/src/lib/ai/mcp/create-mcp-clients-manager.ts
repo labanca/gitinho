@@ -328,8 +328,20 @@ export class MCPClientsManager {
       .map((client) => client.callTool(toolName, input))
       .map((res) => {
         if (res?.content && Array.isArray(res.content)) {
-          const parsedResult = {
-            ...res,
+          // Drop `structuredContent`: FastMCP (and other modern MCP
+          // servers) duplicate the tool return as both a JSON string in
+          // `content[0].text` AND a parsed object in `structuredContent`.
+          // The chat side only consumes `content[0].text` (see
+          // message-parts.tsx parsing and message render), so keeping
+          // `structuredContent` ~doubles the bytes sent to the LLM and
+          // persisted to DB. A 583-row dataset went from ~360 KB to ~175 KB
+          // on the wire just from dropping it.
+          const { structuredContent: _unused, ...rest } = res as Record<
+            string,
+            unknown
+          >;
+          return {
+            ...rest,
             content: res.content.map((c: any) => {
               if (c?.type === "text" && c?.text) {
                 const parsed = safeJSONParse(c.text);
@@ -341,7 +353,6 @@ export class MCPClientsManager {
               return c;
             }),
           };
-          return parsedResult;
         }
         return res;
       })
