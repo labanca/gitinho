@@ -359,6 +359,22 @@ export const AssistMessagePart = memo(function AssistMessagePart({
       .unwrap();
   };
 
+  // AP.1 / AP.10 detector: when the LLM emits its provider-native tool-call
+  // XML (Anthropic style) directly into the text part instead of via a
+  // structured tool call, it means the AI SDK adapter did NOT parse it as a
+  // tool invocation. The model's tool calls are then phantom — there's no
+  // `tool-*` part on this message, and any data the model cites is invented
+  // (commit history of bug reports & investigation in
+  // docs/spec/03-anti-patterns.md AP.1, AP.10, AP.13). Most common cause we
+  // saw in prod is toolChoice="none" while the system prompt still names
+  // tools — but the same symptom can hit if MCP disconnects mid-stream, etc.
+  // The detector fires on any of those by-text leakage patterns. Banner is
+  // visual only (we still render the markdown below) so the user keeps the
+  // ability to copy / inspect the raw output.
+  const hasPhantomToolCall = /<function_calls\b|<invoke\s+name=|<function_response\b/i.test(
+    part.text || "",
+  );
+
   return (
     <div
       className={cn(
@@ -372,6 +388,23 @@ export const AssistMessagePart = memo(function AssistMessagePart({
           "opacity-50 border border-destructive bg-card rounded-lg": isError,
         })}
       >
+        {hasPhantomToolCall && (
+          <div className="flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-xs text-destructive">
+            <TriangleAlert className="size-4 flex-shrink-0 mt-0.5" />
+            <div className="flex flex-col gap-1">
+              <span className="font-semibold">
+                Possível resposta alucinada
+              </span>
+              <span>
+                O modelo emitiu uma chamada de ferramenta como texto bruto em
+                vez de invocar a ferramenta real. Dados citados abaixo (PRs,
+                contagens, repositórios) podem ser inventados — confira no
+                GitHub antes de confiar. Causa comum: modo "Tools" em{" "}
+                <code className="font-mono">none</code> no input do chat.
+              </span>
+            </div>
+          </div>
+        )}
         <Markdown>{part.text}</Markdown>
       </div>
       {showActions && (

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertTriangleIcon,
   AudioWaveformIcon,
   ChevronDown,
   CornerRightUp,
@@ -106,6 +107,7 @@ export default function PromptInput({
     threadMentions,
     threadFiles,
     threadImageToolModel,
+    toolChoice,
     appStoreMutate,
   ] = appStore(
     useShallow((state) => [
@@ -113,6 +115,7 @@ export default function PromptInput({
       state.threadMentions,
       state.threadFiles,
       state.threadImageToolModel,
+      state.toolChoice,
       state.mutate,
     ]),
   );
@@ -415,6 +418,29 @@ export default function PromptInput({
       <div className="z-10 mx-auto w-full max-w-3xl relative">
         <fieldset className="flex w-full min-w-0 max-w-full flex-col px-4">
           <div className="shadow-lg overflow-hidden rounded-4xl backdrop-blur-sm transition-all duration-200 bg-muted/60 relative flex w-full flex-col cursor-text z-10 items-stretch focus-within:bg-muted hover:bg-muted focus-within:ring-muted hover:ring-muted">
+            {toolChoice === "none" && (
+              // Tool mode = "none" is a silent trap: the UI keeps showing
+              // "Tools N" and the system prompt still mentions tool names, but
+              // the backend binds 0 tools to the model (see logs in prod
+              // showing `binding tool count MCP: 0`). The model then
+              // hallucinates tool calls as XML in the text response (AP.1 in
+              // docs/spec/03-anti-patterns.md). This banner makes the state
+              // obvious — click jumps to auto. Don't remove without first
+              // landing a different obvious cue.
+              <button
+                type="button"
+                onClick={() => appStoreMutate({ toolChoice: "auto" })}
+                className="mx-3 mt-2 flex items-start gap-2 rounded-2xl border border-destructive/50 bg-destructive/10 px-4 py-2 text-left text-xs text-destructive hover:bg-destructive/15 transition-colors"
+              >
+                <AlertTriangleIcon className="size-4 flex-shrink-0 mt-0.5" />
+                <span>
+                  <span className="font-semibold">Ferramentas desativadas.</span>{" "}
+                  O modo atual é <code className="font-mono">none</code> — o
+                  agente não tem acesso às ferramentas e pode inventar dados.{" "}
+                  <span className="underline">Clique para voltar pro modo Auto.</span>
+                </span>
+              </button>
+            )}
             {mentions.length > 0 && (
               <div className="bg-input rounded-b-sm rounded-t-3xl p-3 flex flex-col gap-4 mx-2 my-2">
                 {mentions.map((mention, i) => {

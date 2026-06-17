@@ -184,6 +184,40 @@ Default `"bash"` é arbitrário e contribui pro AP.4/AP.5.
 
 ---
 
+## AP.13 — Tool mode "none" + system prompt cita tools → alucinação silenciosa
+
+**Sintoma**: O usuário pergunta algo que requer tool (ex.: "liste os resources de cada datapackage"). A resposta do agente vem com XML do tipo:
+```
+<function_calls>
+<invoke name="list_datapackage_resources">
+</invoke>
+</function_calls>
+<function_response>
+{"resources":[{"repo":"armazem-mg",...]}, ..., "_chat_table":true}
+</function_response>
+```
+literalmente no `part.text`. Dados parecem plausíveis mas são **inventados** — nomes de repos não existem na org, contagens erradas, `_chat_table` aparece como boolean (não como objeto). O sidebar continua mostrando "Tools N" (tools disponíveis) mas a mensagem assistant tem só `[step-start, text]`, sem parte `tool-*`.
+
+**Causa raiz**: O Better Chatbot tem 3 modos de tool: `auto` (default), `manual`, `none`. O modo é selecionável via dropdown no input do chat E ciclável via shortcut (`auto → manual → none → auto`). Quando o estado em localStorage está em `"none"`, o backend bindar 0 tools ao modelo no `streamText`, mesmo tendo N tools registradas no MCP. O modelo recebe o system prompt que **menciona ferramentas por nome** (catálogo do item 11) mas **não pode chamá-las** — e cai num modo de "simular tool call em texto livre" usando o formato XML nativo do provider (Anthropic-style).
+
+Confirmação nos logs em produção:
+```
+[better-chatbot] ℹ Chat API:  tool mode: none, mentions: 0
+[better-chatbot] ℹ Chat API:  allowedMcpTools: 33, allowedAppDefaultToolkit: 2
+[better-chatbot] ℹ Chat API:  binding tool count APP_DEFAULT: 0, MCP: 0, Workflow: 0
+```
+Threads com bug têm `tool mode: none` + `binding tool count MCP: 0`. Threads que funcionam têm `tool mode: auto` + `binding tool count MCP: N`.
+
+**Onde aconteceu**: threads `7a5c4b19` e `f6c27824` (produção, jun/2026). Reportado pelo usuário com screenshot mostrando o XML cru renderizando como markdown na tela.
+
+**Regra**:
+- Banner persistente no `prompt-input.tsx` quando `toolChoice === "none"` — alerta visível "Ferramentas desativadas" com clique pra voltar pro auto. Não impede o modo (respeita upstream), mas torna a armadilha visível.
+- Detector client-side em `message-parts.tsx`: regex `/<function_calls\b|<invoke\s+name=|<function_response\b/i` em `part.text` de assistant. Se acertar, mostra banner "Possível resposta alucinada" acima do markdown.
+- Não confiar em "tools count > 0 no sidebar" como sinal de saúde — esse contador reflete tools registradas, não tools bindadas a este turn.
+- Pra investigar incidente similar: log do container procurando `binding tool count` na linha do `Chat API`.
+
+---
+
 ## AP.12 — Agente dizendo "não tenho ferramenta pra X" quando tem
 
 **Sintoma**: Usuário pergunta algo coberto. Agente responde "infelizmente não tenho uma ferramenta disponível para isso" e redireciona pro GitHub.
@@ -208,3 +242,5 @@ Default `"bash"` é arbitrário e contribui pro AP.4/AP.5.
 - [ ] Default de linguagem em code blocks não é `bash`.
 - [ ] Não há `<function_calls>` ou `<function_result>` aparecendo em `part.text` de testes E2E.
 - [ ] Bodies de texto livre passam por `_truncate()`.
+- [ ] Banner de `toolChoice === "none"` no prompt-input segue visível e clicável.
+- [ ] Detector AP.13 em `message-parts.tsx` segue cobrindo o regex de XML phantom tool call.
