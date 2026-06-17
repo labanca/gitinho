@@ -184,6 +184,34 @@ Default `"bash"` é arbitrário e contribui pro AP.4/AP.5.
 
 ---
 
+## AP.14 — `search_issues` com `repo:` + `sort:` → retorna 0 silenciosamente (pior que AP.7)
+
+**Sintoma**: Usuário pergunta "qual última issue do repo X?". Agente chama `search_issues` com `query="repo:splor-mg/X is:issue sort:created-desc"`. Wrapper anexa `org:splor-mg`, fica:
+```
+(repo:splor-mg/X is:issue sort:created-desc) org:splor-mg
+```
+GitHub responde **`total: 0` SEM erro 422**. Agente conclui: "o repo X não tem issues". **Repo tem 16 issues abertas e várias fechadas** — agente mentiu.
+
+**Causa raiz**: 3 problemas combinados.
+1. **`repo:` + `org:` conflitam** — variante do AP.7 (que documentamos pra PRs). Em PRs dá 422; em issues GitHub aceita mas filtra zerando.
+2. **`sort:created-desc` como qualifier dentro do `q`** — `sort:` NÃO é qualifier válido do GitHub Search. Ordenação é via parâmetro `sort=created&order=desc`, não embutida em `q`. Adicionar isso como qualifier provavelmente faz GitHub interpretar como nome de label/milestone e zera os resultados.
+3. **Gap real de tool**: não existe `list_issues_by_repo` análoga a `list_prs_by_repo`. Sem alternativa específica, o agente cai em `search_issues` que é AP.7-style.
+
+**Onde aconteceu**: thread em produção (jun/2026) — usuário perguntou pela última issue do repo `splor-mg/datamart`. Agente retornou "0 issues" enquanto o repo mostrava 16 abertas.
+
+**Por que é pior que AP.7**:
+- AP.7 dá 422 → agente vê erro → tenta outra coisa.
+- AP.14 dá 200 + `total: 0` → agente acredita → resposta confiante errada. **Alucinação por construção (não por modelo)**.
+
+**Regras**:
+- **Criar `list_issues_by_repo(repo, state, label, since, until, max_results)`** análoga a `list_prs_by_repo`. Mesmo shape (`is:issue` forçado, `repo:<org>/<X>` pinado, strip de `org:`/`user:`/`repo:` do agente). Item de roadmap.
+- **Criar `last_issue_by_repo(repo)`** análoga a `last_pr_by_user` mas por repo. 1 call, retorna o registro top.
+- **Mitigação imediata** (sem nova tool): hardening do `search_issues` — se a query do agente já contém `repo:X/Y`, **NÃO** anexar `org:`. Detectar e suprimir. Custa ~5 linhas.
+- **Mitigação imediata 2**: strip de qualifier `sort:` dentro do `q` — sort não tem efeito como qualifier; usar parâmetro `sort=` se o agente pedir ordering.
+- Atualizar prompt: catálogo da família "issues" com critério de seleção, equivalente ao item 12.2 da família PR.
+
+---
+
 ## AP.13 — Tool mode "none" + system prompt cita tools → alucinação silenciosa
 
 **Sintoma**: O usuário pergunta algo que requer tool (ex.: "liste os resources de cada datapackage"). A resposta do agente vem com XML do tipo:

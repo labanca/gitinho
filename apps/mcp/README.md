@@ -52,3 +52,14 @@ Gaps conhecidos remanescentes (não bloqueantes; planejar quando aparecer demand
 - **Team-review requests** — `list_prs_awaiting_review` cobre só requests individuais (`review-requested:<login>`); não inclui PRs aguardando review de um time (`team-review-requested:<team>`).
 - **PR review-line comments** — `list_pr_comments_by_user` lê só os comentários do timeline (`/issues/.../comments`), não os de linha de código (`/pulls/.../comments`).
 - **Status check detail** — `get_pr` traz `mergeable_state` mas não a tabela detalhada de check runs (GitHub Checks API).
+
+## Cobertura de tools de issues — gap conhecido
+
+Hoje só existe `count_open_issues`, `last_issue_by_user`, `search_issues` e `list_issue_comments_by_user`. Faltam contrapartidas das tools de PR já feitas (commit `ef3ea3a`):
+
+- **`list_issues_by_repo(repo, state, label, since, until, max_results)`** — análoga a `list_prs_by_repo`. Necessária pra responder "lista issues do repo X" sem cair em `search_issues` (caminho AP.14).
+- **`last_issue_by_repo(repo)`** — análoga a `last_pr_by_user` mas por repo. Necessária pra "qual última issue do repo X?".
+- **`get_issue(repo, number, include_comments=False)`** — análoga a `get_pr`. Detalhe de uma issue.
+- **`search_issues` precisa de hardening**: detectar `repo:X/Y` na query do agente e NÃO anexar `org:Y` (provoca AP.14 — `total: 0` silencioso). Strip de `sort:` dentro de `q` (não é qualifier válido, zera resultados).
+
+Esses gaps motivaram o anti-padrão AP.14 em [`docs/spec/03-anti-patterns.md`](../../docs/spec/03-anti-patterns.md) (jun/2026).
