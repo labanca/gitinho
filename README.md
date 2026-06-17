@@ -10,18 +10,25 @@ atividade de usuários, datapackages — e gera planilhas sob demanda.
 Exemplos de perguntas que o Gitinho responde com precisão:
 
 - Quantos PRs estão abertos em toda a organização?
-- Quantos datapackages possuímos? Quantos públicos e privados?
-- Liste todos os repositórios com campos X, Y, Z em uma planilha.
+- Quais PRs aguardando review do usuário X? Quais abertos no repo Y?
+- Quantos datapackages possuímos? Quais arquivos contém a string `periodo=`?
+- Liste todos os recursos de todos os datapackages — a tabela aparece
+  inline com busca, ordenação e export CSV/XLSX, sem o agente precisar
+  re-emitir cada linha.
 - Qual o último commit do usuário Z no repo B?
 - Quais repositórios não recebem atualização há mais de N dias?
-- Sobre o que é o repo X? (chama `describe_repo`: junta metadata,
-  README, `docs/index.md` do mkdocs e manifests como `pyproject.toml`
-  numa única resposta)
-- Mostre o `mkdocs.yml` / `datapackage.json` / `pyproject.toml` do
-  repo X.
+- Sobre o que é o repo X? (`describe_repo` junta metadata, README,
+  `docs/index.md` do mkdocs e manifests numa única resposta)
+- Mostre o `mkdocs.yml` / `datapackage.json` / `pyproject.toml` do repo X.
 - Relatório completo de atividade por usuário (issues, commits, PRs,
   reviews, comentários, última interação).
 - Suba este PDF/DOCX/XLSX e me ajude a interpretar.
+- "Agrupe esses 583 recursos por mediatype" — análises ad-hoc rodam em
+  Pyodide no browser, usando `pyfetch` no proxy server-side pra ler
+  dados da org sem credencial no client.
+
+Catálogo canônico de pergunta → comportamento esperado em
+[`docs/spec/01-acceptance-cases.md`](docs/spec/01-acceptance-cases.md).
 
 ## Stack
 
@@ -31,26 +38,44 @@ Monorepo (pnpm workspace + uv workspace):
   [`cgoinglove/better-chatbot`](https://github.com/cgoinglove/better-chatbot)
   (Next.js 16, Vercel AI SDK, Better Auth, Drizzle ORM, Postgres).
 - **`apps/mcp/`** — servidor [MCP](https://modelcontextprotocol.io)
-  Python (`gitinho-mcp`) expondo **26 tools read-only** sobre a API do
-  GitHub (repos, issues, PRs, commits, discussions, atividade,
-  glossário, conteúdo e navegação de arquivos, ingest de documentos).
-  Inclui o orquestrador `describe_repo` (metadata + README + manifests
-  + listagem da raiz numa única chamada) e `list_repo_contents` para
-  navegar a árvore de arquivos sem chutar paths. Usa GitHub App para
-  acesso autenticado.
+  Python (`gitinho-mcp`) expondo **34 tools read-only** sobre a API do
+  GitHub: repos, issues, PRs (incluindo `search_prs`, `list_prs_by_repo`,
+  `list_prs_awaiting_review`, `get_pr`), commits, discussions, atividade,
+  glossário, conteúdo e navegação de arquivos, busca livre em código
+  (`search_code`), ingest de documentos. Orquestradores notáveis:
+  `describe_repo` (metadata + README + manifests + listagem da raiz numa
+  chamada), `list_datapackage_resources` (flat list autoritativa de
+  recursos de todos os datapackages da org), `list_repo_contents` (navegar
+  árvore de arquivos sem chutar paths). Usa GitHub App pra acesso
+  autenticado, com `org:` pin defensivo em qualquer tool de search.
 
 A separação chat/MCP isola toda a lógica GitHub-específica do frontend,
 permite reusar as tools fora do chat (CLI, cron, CI) e abre a porta para
 plugar outros servidores MCP (GitHub oficial, Postgres, filesystem,
-etc.) sem código nosso.
+etc.) sem código nosso. Princípio "uma MCP por domínio externo"
+detalhado em [`docs/adr/0001`](docs/adr/0001-one-mcp-per-external-domain.md).
 
-**Custom agents prontos**: `@Datapackages` (especialista em datapackages
-Frictionless) e `@Atividade` (relatórios de atividade da org).
-@-mention no chat input invoca um agente com prompt e tools restritas.
+**Auto-render de listagens grandes**: tools de listagem retornam um
+campo `_chat_table` que a UI detecta e renderiza como tabela interativa
+(busca, ordenação, export CSV/XLSX) **sem o agente regenerar cada linha
+como argumento de tool**. Listagens de 500+ rows aparecem em segundos em
+vez de minutos. Protocolo descrito em
+[`docs/adr/0004`](docs/adr/0004-marker-prefix-render-protocol.md).
 
-**Exports** acontecem pela tool nativa `createTable` — o agente busca
-os dados via MCP, e a tabela renderizada na UI tem botões nativos de
-download XLSX/CSV.
+**Análises ad-hoc em Python**: Pyodide roda no browser dentro de um
+iframe escopado (`/pyodide-runner`) com CSP relaxado só pra essa rota; o
+app principal mantém hardening. O Python do agente lê dados da org via
+`pyfetch("/api/gh-proxy/...")` — proxy server-side mint instalação tokens
+e enforça allowlist de path (GET-only, `/repos/<org>/...` e
+`/orgs/<org>...`). Helpers nativos: `display_table(title, columns, rows)`
+pra renderizar tabela interativa direto do Python. Decisões em
+[`docs/adr/0002`](docs/adr/0002-one-proxy-route-per-external-domain.md) e
+[`docs/adr/0003`](docs/adr/0003-pyodide-runs-in-scoped-iframe.md).
+
+**Custom agents disponíveis** (opcionais via `@`-mention): `@Datapackages`,
+`@Atividade`. O chat default (sem mention) já tem todas as 34 tools e o
+prompt base do Gitinho — agents são especialização opcional, não pré-
+requisito.
 
 ## Pré-requisitos
 
@@ -110,10 +135,19 @@ gitinho/
 ├── docs/
 │   ├── ARCHITECTURE.md        diagramas e fluxos
 │   ├── DEPLOY.md              produção via Easy Panel
-│   ├── DECISIONS.md           log de decisões estruturais
+│   ├── DECISIONS.md           log de decisões estruturais (histórico)
 │   ├── PLAN.md                plano e status de implementação
 │   ├── SECURITY.md            modelo de ameaças + controles
-│   └── MIGRATION_BETTER_CHATBOT.md   histórico da migração
+│   ├── MIGRATION_BETTER_CHATBOT.md   histórico da migração
+│   ├── adr/                   Architecture Decision Records (por que)
+│   │   ├── 0001-one-mcp-per-external-domain.md
+│   │   ├── 0002-one-proxy-route-per-external-domain.md
+│   │   ├── 0003-pyodide-runs-in-scoped-iframe.md
+│   │   └── 0004-marker-prefix-render-protocol.md
+│   └── spec/                  Spec executável (o que o sistema FAZ)
+│       ├── 01-acceptance-cases.md     casos canônicos pergunta→comportamento
+│       ├── 02-security-invariants.md  invariantes que não podem regredir
+│       └── 03-anti-patterns.md        modos de falha observados em produção
 ├── secrets/
 │   └── gh-app.pem      Chave privada da GitHub App (NÃO versionado)
 ├── pnpm-workspace.yaml

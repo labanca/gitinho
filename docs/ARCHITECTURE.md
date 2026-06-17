@@ -2,8 +2,10 @@
 
 > Visão técnica do estado atual. Detalhes operacionais em
 > [`DEPLOY.md`](./DEPLOY.md); controles de segurança em
-> [`SECURITY.md`](./SECURITY.md); racional das decisões em
-> [`DECISIONS.md`](./DECISIONS.md).
+> [`SECURITY.md`](./SECURITY.md) + invariantes técnicas em
+> [`spec/02-security-invariants.md`](./spec/02-security-invariants.md);
+> racional das decisões em [`DECISIONS.md`](./DECISIONS.md) (histórico
+> até 2026-05-29) e [`adr/`](./adr/) (decisões posteriores).
 
 ## 1. Visão Geral
 
@@ -13,6 +15,11 @@ Monorepo com duas aplicações e dois serviços de infra:
 ┌──────────────────────────────────────────────────────────────────────┐
 │                    Browser do usuário (HTTPS)                        │
 │  Chat tipo ChatGPT │ Threads │ Streaming │ Login GitHub OAuth        │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │ iframe /pyodide-runner (CSP escopado, mesma origem)            │  │
+│  │  ▸ Pyodide + Oniguruma WASM                                    │  │
+│  │  ▸ pyfetch → /api/gh-proxy (NÃO fala api.github.com direto)    │  │
+│  └────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────┬───────────────────────────────────────────┘
                            │ HTTPS via Easy Panel proxy
                            │ Cookie HttpOnly de sessão (Better Auth)
@@ -21,8 +28,13 @@ Monorepo com duas aplicações e dois serviços de infra:
 │  apps/chat — Next.js 16 (fork better-chatbot)                        │
 │  ┌────────────────────────────────────────────────────────────────┐  │
 │  │ Better Auth: GitHub OAuth + hook de allowlist por org          │  │
-│  │ App Router: /api/chat, /api/thread, /api/mcp, /api/export      │  │
+│  │ App Router:                                                    │  │
+│  │   /api/chat, /api/thread, /api/mcp, /api/export                │  │
+│  │   /api/gh-proxy/[...path] (server-side mint installation token,│  │
+│  │     GET-only, allowlist /repos/<org>/... e /orgs/<org>...)     │  │
+│  │   /pyodide-runner (host do iframe, CSP relaxado escopado)      │  │
 │  │ Vercel AI SDK: streamText + tools nativas (createTable, etc.)  │  │
+│  │ Auto-render protocol: _chat_table em tool result MCP           │  │
 │  │ Drizzle ORM: threads, messages, agents, mcp_servers, users     │  │
 │  │ File ingest: PDF/DOCX/PPTX/XLSX via tool MCP convert_document  │  │
 │  └─────────────────────────┬──────────────────────────────────────┘  │
@@ -33,15 +45,19 @@ Monorepo com duas aplicações e dois serviços de infra:
 │  apps/mcp — gitinho-mcp (Python 3.12)                                │
 │  ┌────────────────────────────────────────────────────────────────┐  │
 │  │ FastMCP server (mcp SDK oficial)                               │  │
-│  │ 26 tools auto-registradas via @mcp.tool()                      │  │
+│  │ 34 tools auto-registradas via @mcp.tool()                      │  │
 │  │  ├── repos/users/issues/pulls/commits/discussions/activity     │  │
+│  │  ├── code_search (search/code do GitHub, org pinada)           │  │
+│  │  ├── datapackages (find + list_datapackage_resources)          │  │
 │  │  ├── glossary (lê <org>/.github/gitinho-context.md)            │  │
 │  │  └── documents (MarkItDown)                                    │  │
+│  │ Tools de listagem retornam _chat_table → UI auto-render        │  │
 │  │ GitHub client: GitHub App (JWT RS256 → installation token)     │  │
 │  │ OrgAllowlistError em qualquer owner ≠ ALLOWED_ORG              │  │
+│  │ Strip defensivo de org:/user:/repo: em queries de search       │  │
 │  └─────────────────────────┬──────────────────────────────────────┘  │
 └────────────────────────────┼─────────────────────────────────────────┘
-                             │ HTTPS
+                             │ HTTPS (do MCP server-side OU do gh-proxy)
                              ▼
                     ┌─────────────────────┐
                     │   api.github.com    │
@@ -73,22 +89,40 @@ apps/chat/src/
 │   │   ├── chat/route.ts        streamText + tools (entrypoint do chat)
 │   │   ├── thread/              CRUD de threads
 │   │   ├── mcp/                 introspecção de servers MCP
-│   │   └── export/[id]/         download de exports persistidos
+│   │   ├── export/[id]/         download de exports persistidos
+│   │   └── gh-proxy/[...path]/  proxy server-side GET-only com mint
+│   │                            de installation token (path allowlist
+│   │                            /repos/<org>/... e /orgs/<org>...)
+│   ├── pyodide-runner/          host do iframe escopado com CSP relaxado
+│   │                            (wasm-unsafe-eval + blob: workers +
+│   │                            jsDelivr) — isolado do app principal
+│   ├── test/pyodide/            smoke test do pipeline Pyodide+proxy+CSP
 │   ├── (auth)/sign-in           login Better Auth
 │   ├── (chat)/                  UI principal
 │   └── (public)/                rotas públicas (compartilhar thread, export)
 ├── components/
 │   ├── chat-bot.tsx             componente principal de chat
 │   ├── chat-mention-input.tsx   @-mention de agents
-│   └── ...
+│   ├── message-parts.tsx        detecta _chat_table em tool result MCP
+│   │                            e renderiza InteractiveTable inline
+│   ├── pre-block.tsx            code blocks (Shiki + fallback robusto)
+│   └── tool-invocation/
+│       ├── interactive-table.tsx  tabela com busca/sort/CSV+XLSX export
+│       └── code-executor.tsx      executor JS/Python com parser de
+│                                  marker [[gitinho:table]]
 ├── lib/
 │   ├── ai/
-│   │   ├── prompts.ts           system prompt do Gitinho (4 camadas)
+│   │   ├── prompts.ts           system prompt do Gitinho (aplicado em
+│   │   │                        todo chat default — agent é opcional)
 │   │   ├── agent/
 │   │   │   └── gitinho-agents.ts  @Datapackages + @Atividade
 │   │   ├── tools/               tools nativas (createTable, etc.)
 │   │   └── ingest/
 │   │       └── markdown-ingest.ts  chama convert_document do MCP
+│   ├── code-runner/
+│   │   ├── call-worker.ts       singleton iframe + postMessage protocol
+│   │   ├── safe-python-run.ts   Pyodide bootstrap + display_table helper
+│   │   └── safe-js-run.ts       JS sandbox (Worker)
 │   ├── auth/
 │   │   ├── auth-instance.ts     Better Auth + hook signIn.before
 │   │   └── github-org-allowlist.ts  enforce de ALLOWED_ORG
@@ -113,16 +147,26 @@ apps/mcp/gitinho_mcp/
 │   └── pagination.py  iterador async de páginas REST
 └── tools/
     ├── _context.py    ToolContext (env, gh client, allowed_org)
-    ├── repos.py       7 tools
+    ├── repos.py       8 tools (count/list/find/describe/get_repo etc.)
     ├── issues.py      3 tools
-    ├── pulls.py       3 tools
+    ├── pulls.py       7 tools (count, list_by_user, last_by_user,
+    │                  search_prs, list_prs_by_repo,
+    │                  list_prs_awaiting_review, get_pr)
+    ├── code_search.py 1 tool (search_code, com strip de qualifiers)
+    ├── datapackages.py 1 tool (list_datapackage_resources)
     ├── commits.py     2 tools
     ├── users.py       2 tools
     ├── activity.py    2 tools
+    ├── comments.py    2 tools
     ├── discussions.py 1 tool
     ├── glossary.py    1 tool (get_org_glossary)
     └── documents.py   1 tool (convert_document, MarkItDown)
 ```
+
+Tools de listagem retornam `_chat_table` no result dict — a UI detecta
+e renderiza `InteractiveTable` inline sem o agente precisar chamar
+`createTable` por cima. Detalhes do protocolo em
+[`adr/0004`](./adr/0004-marker-prefix-render-protocol.md).
 
 Cada tool é registrada via decorator `@mcp.tool()` do SDK MCP oficial; o
 schema é inferido da assinatura Python. Toda chamada ao GitHub passa por

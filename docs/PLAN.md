@@ -5,6 +5,18 @@
 > linguagem natural sobre repositórios, issues, PRs, commits, atividade de
 > usuários, datapackages e gera planilhas (XLSX/CSV) sob demanda.
 
+> **Snapshot histórico da Fase 1 (até 2026-05-26).** Para o estado atual
+> do sistema, consulte:
+> - [`README.md`](../README.md) — overview e capacidades atuais (34 tools).
+> - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — diagrama e fluxo atualizados.
+> - [`spec/01-acceptance-cases.md`](./spec/01-acceptance-cases.md) — comportamentos canônicos por família de pergunta.
+> - [`adr/`](./adr/) — decisões arquiteturais novas (Pyodide, gh-proxy,
+>   marker prefix protocol, uma MCP por domínio).
+>
+> O conteúdo abaixo reflete o estado em 2026-05-26 (26 tools, sem Pyodide
+> nem gh-proxy nem `_chat_table` protocol). Útil pra entender o ponto de
+> partida; não use como referência do que existe hoje.
+
 Última atualização: 2026-05-26
 
 ---

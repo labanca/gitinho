@@ -5,6 +5,12 @@
 > prompt-injection, ele não consegue destruir nem exfiltrar ativos da
 > organização.
 
+> **Para detalhes técnicos atualizados de cada invariante** (com
+> referências de arquivo:linha e como detectar regressão), ver
+> [`spec/02-security-invariants.md`](./spec/02-security-invariants.md).
+> Este documento mantém o modelo de ameaças e os controles em formato
+> de overview.
+
 ## 1. Modelo de Ameaças
 
 | Atacante | Vetor | O que ele pode fazer | Como bloqueamos |
@@ -110,8 +116,10 @@ atuais:
 
 ### 2.7 Headers de Segurança
 
-Configurados em `apps/chat/next.config.ts` (fase 8 do roadmap, commit
-`a2ad9a9`):
+Configurados em `apps/chat/next.config.ts`. **Duas CSPs distintas** por
+regra de header (rules com regex negative-lookahead):
+
+#### CSP do app principal (catch-all exceto `/pyodide-runner`)
 
 ```
 Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
@@ -120,16 +128,76 @@ X-Frame-Options: DENY
 Referrer-Policy: strict-origin-when-cross-origin
 Content-Security-Policy:
   default-src 'self';
-  script-src 'self' 'unsafe-inline';   (necessário para Next.js)
+  script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval';
   style-src 'self' 'unsafe-inline';
-  img-src 'self' data: https://avatars.githubusercontent.com https://cdn.jsdelivr.net;
-  connect-src 'self';
+  img-src 'self' data: blob: https://avatars.githubusercontent.com;
+  font-src 'self' data:;
+  connect-src 'self' https://api.github.com;
+  worker-src 'self' blob:;
+  frame-src 'self';
   frame-ancestors 'none';
+  base-uri 'self';
+  form-action 'self';
 Permissions-Policy: camera=(), microphone=(), geolocation=()
 ```
 
-`unsafe-inline` em script-src vem do framework — pode ser apertado com
-nonces no futuro.
+- `'wasm-unsafe-eval'`: necessário pro Shiki (syntax highlight) que usa
+  Oniguruma compilado em WASM. Sem isso, Chrome bloqueia
+  `WebAssembly.compile()` silenciosamente — todo code block do chat
+  fica sem cor (regressão histórica AP.5).
+- `worker-src 'self' blob:`: Turbopack do Next.js cria worker bundles
+  via blob: URLs.
+- `frame-src 'self'`: permite embedar o `/pyodide-runner` (mesma origin).
+- `connect-src` inclui `api.github.com` pra calls server-side, mas
+  **NÃO inclui `raw.githubusercontent.com`** — Pyodide precisa passar
+  pelo proxy.
+- `unsafe-inline` em script-src vem do framework; pode ser apertado com
+  nonces no futuro.
+
+#### CSP escopada do `/pyodide-runner` (relaxada)
+
+```
+Content-Security-Policy:
+  default-src 'self';
+  script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'
+             blob: https://cdn.jsdelivr.net;
+  worker-src 'self' blob:;
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob:;
+  font-src 'self' data:;
+  connect-src 'self' https://cdn.jsdelivr.net;
+  frame-ancestors 'self';
+  base-uri 'self';
+  form-action 'none';
+```
+
+- Pyodide vem do CDN jsDelivr.
+- `connect-src` **propositalmente exclui `api.github.com`**: força todo
+  tráfego de leitura pelo `/api/gh-proxy` (defesa em profundidade —
+  mesmo que o agente tente bypass, CSP bloqueia).
+- `frame-ancestors 'self'`: só o app principal embeda; nenhum site
+  externo.
+- Sem `X-Frame-Options: DENY` aqui (o app principal precisa embedar);
+  `frame-ancestors 'self'` faz o equivalente.
+
+### 2.7.1 Proxy server-side `/api/gh-proxy`
+
+Pyodide (no iframe) precisa ler dados da org sem ter credencial GitHub
+direta. A rota `/api/gh-proxy/[...path]/route.ts` resolve isso:
+
+1. Exige cookie de sessão válido (Better Auth).
+2. Aceita apenas `GET` (outros métodos → 405).
+3. Path allowlist: só `/repos/<ALLOWED_ORG>/...` ou `/orgs/<ALLOWED_ORG>...`.
+4. Path traversal bloqueado mesmo com encoding (`decodeURIComponent`
+   antes do `includes("..")`).
+5. Header `Authorization` do caller é dropado.
+6. Mint do GitHub App installation token server-side (JWT RS256 via
+   `node:crypto`, cache até 30s antes do exp).
+7. Forward upstream pra `api.github.com`.
+
+Token **nunca** vaza pro browser nem pro contexto Python. Detalhes em
+[`adr/0002`](./adr/0002-one-proxy-route-per-external-domain.md) e
+[`adr/0003`](./adr/0003-pyodide-runs-in-scoped-iframe.md).
 
 ### 2.8 Segredos
 

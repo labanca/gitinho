@@ -4,6 +4,73 @@
 > que** foi decidido, **por que**, e **alternativas consideradas**. Use
 > este log para entender o histórico antes de mudar algo estrutural.
 
+> **A partir de 2026-06**, decisões arquiteturais novas vão para
+> [`adr/`](./adr/) (formato ADR padrão da indústria — Context, Decision,
+> Consequences, Alternatives Considered, Enforcement, References). Este
+> arquivo mantém o histórico anterior e a entrada de meta-resumo das
+> decisões mais recentes, que apontam pras ADRs detalhadas.
+
+## 2026-06 — Capacidades novas (resumo; detalhes nas ADRs)
+
+Sessão de implementação grande cobrindo 4 frentes. Cada uma tem uma ADR
+ou seção de spec própria; abaixo é apenas o índice.
+
+### Execução Python no browser
+- Pyodide num iframe escopado em `/pyodide-runner`, com CSP relaxado
+  separada da CSP do app principal. Ver [ADR 0003](./adr/0003-pyodide-runs-in-scoped-iframe.md).
+- Smoke test em `/test/pyodide` (3 passos: boot + pyfetch via proxy +
+  CSP bloqueia api.github.com direto).
+
+### Proxy server-side `/api/gh-proxy`
+- Pyodide não tem credencial GitHub direta. Proxy mint installation
+  token, enforça GET-only + allowlist de path + drop de Authorization
+  do caller. Ver [ADR 0002](./adr/0002-one-proxy-route-per-external-domain.md).
+
+### Auto-render de tabela via `_chat_table`
+- Tools de listagem MCP retornam campo `_chat_table` com title/columns/
+  data_field. UI renderiza `InteractiveTable` direto sem o LLM
+  re-emitir cada linha como tool arg. Em produção: 583 rows aparecem em
+  segundos em vez de minutos. Mesma idéia em Python via `display_table`
+  + marker `[[gitinho:table]]`. Ver [ADR 0004](./adr/0004-marker-prefix-render-protocol.md).
+
+### Cobertura ampliada de tools de PR
+- Adicionadas `search_prs` (busca livre escopada a `is:pr`),
+  `list_prs_by_repo` (PRs por repo com filtros), `list_prs_awaiting_review`
+  (`review-requested:<login>`), `get_pr` (detalhe completo opcional com
+  files/reviews). Total subiu de 26 → 34 tools.
+- Strip defensivo de `org:`/`user:`/`repo:` em queries do agente, com
+  re-âncora em `org:<ALLOWED_ORG>` (mesmo padrão do `search_code`).
+
+### Fixes técnicos relevantes
+- **PreBlock/CodeBlock** (`apps/chat/src/components/`): `useState` pré-
+  computado capturava `children` vazios durante streaming; corrigido
+  pra estado inicial `null` + fallback re-avaliado no JSX (commit
+  `e79fb48`).
+- **CSP do app principal**: adicionada directive `'wasm-unsafe-eval'`
+  pra desbloquear Shiki (Oniguruma → WASM). Sem ela, todos os code
+  blocks ficavam sem syntax color em produção (commit `28043ea`).
+
+### Base documental do rebuild
+- `docs/spec/` criado com 3 documentos: acceptance cases (pergunta →
+  comportamento esperado), security invariants (com referência ao
+  código que enforça), anti-patterns (modos de falha observados em
+  produção). Extraídos do histórico real de threads em produção.
+- `docs/adr/` com 4 ADRs cobrindo: uma MCP por domínio, um proxy por
+  domínio, Pyodide iframe escopado, marker prefix protocol.
+
+### Princípio para extensão futura
+
+Discussão arquitetural sobre escalar Gitinho pra outros domínios SPLOR
+(orçamento, SEI). Posição adotada: **não generalizar prematuramente**.
+Manter disciplina em 4 seams (uma MCP por domínio, um proxy por
+domínio, um prompt builder por persona, domain knowledge confinado ao
+seu domínio) já dá a extensibilidade necessária quando o segundo
+domínio aparecer com data marcada. Sem 2º caso de uso concreto, a
+infraestrutura atual fica como está. Material relacionado:
+[ADR 0001](./adr/0001-one-mcp-per-external-domain.md).
+
+---
+
 ## 2026-05-29 — Claude via Azure Foundry passthrough (quarta iteração)
 
 A decisão anterior trocou o default para Sonnet 4.6 via provider

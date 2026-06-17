@@ -4,7 +4,7 @@
 
 ## Context
 
-O Gitinho hoje consome **uma** MCP server (`apps/mcp/gitinho_mcp/`) que expõe ~36 tools read-only pra dados da org `splor-mg` no GitHub. A intenção declarada é estender o agente pra outros domínios (orçamento SPLOR, processos SEI, etc.) ao longo do tempo — sem se comprometer com datas, mas como direção provável.
+O Gitinho hoje consome **uma** MCP server (`apps/mcp/gitinho_mcp/`) que expõe 34 tools read-only pra dados da org `splor-mg` no GitHub. A intenção declarada é estender o agente pra outros domínios (orçamento SPLOR, processos SEI, etc.) ao longo do tempo — sem se comprometer com datas, mas como direção provável.
 
 Surge a pergunta arquitetural: quando o segundo domínio aparecer, ele deve ser:
 - (a) adicionado como mais um pacote de tools dentro da MCP existente, OU
