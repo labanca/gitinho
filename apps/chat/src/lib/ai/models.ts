@@ -36,12 +36,15 @@ const groq = createGroq({
 // a Foundry-issued key (not sk-ant-...). When ANTHROPIC_BASE_URL is
 // unset, fall back to the default Anthropic SDK behavior (api.anthropic.com
 // with whatever sk-ant-... key is in ANTHROPIC_API_KEY).
-const anthropic = process.env.ANTHROPIC_BASE_URL
+const isAzureAnthropic = !!process.env.ANTHROPIC_BASE_URL;
+const anthropic = isAzureAnthropic
   ? createAnthropic({
       baseURL: process.env.ANTHROPIC_BASE_URL,
       apiKey: process.env.ANTHROPIC_API_KEY,
     })
   : defaultAnthropic;
+
+const azureSuffix = isAzureAnthropic ? "-default" : "";
 
 const staticModels = {
   openai: {
@@ -61,11 +64,11 @@ const staticModels = {
     "gemini-2.5-pro": google("gemini-2.5-pro"),
   },
   anthropic: {
-    "sonnet-4.6": anthropic("claude-sonnet-4-6"),
-    "sonnet-4.5": anthropic("claude-sonnet-4-5"),
-    "haiku-4.5": anthropic("claude-haiku-4-5"),
-    "opus-4.7": anthropic("claude-opus-4-7"),
-    "opus-4.5": anthropic("claude-opus-4-5"),
+    "sonnet-4.6": anthropic(`claude-sonnet-4-6${azureSuffix}`),
+    "sonnet-4.5": anthropic(`claude-sonnet-4-5${azureSuffix}`),
+    "haiku-4.5": anthropic(`claude-haiku-4-5${azureSuffix}`),
+    "opus-4.7": anthropic(`claude-opus-4-7${azureSuffix}`),
+    "opus-4.5": anthropic(`claude-opus-4-5${azureSuffix}`),
   },
   xai: {
     "grok-4-1-fast": xai("grok-4-1-fast-non-reasoning"),
